@@ -1,0 +1,642 @@
+// ptp_IsometricCam.jsx
+// v1.0 — Isometric Camera Setup for After Effects
+// Установка: ScriptUI Panels -> Window -> ptp_IsometricCam.jsx
+
+{
+    var IC_Data = {
+        scriptName: "ptp_IsometricCam",
+        scriptVersion: "v1.0",
+        strHelpBtn1Url: "http://aescripts.com/pt_shiftlayers/",
+        strHelpBtn2Url: "http://aescripts.com/category/scripts/paul-tuersley/"
+    };
+
+    var COL = {
+        bg:        [0.16, 0.16, 0.17, 1],
+        bgPanel:   [0.20, 0.20, 0.22, 1],
+        bgInput:   [0.12, 0.12, 0.13, 1],
+        accent:    [0.98, 0.78, 0.20, 1],
+        accent2:   [0.40, 0.75, 0.95, 1],
+        text:      [0.92, 0.92, 0.93, 1],
+        textMuted: [0.60, 0.60, 0.63, 1]
+    };
+
+    // Пресеты камеры [angleX, angleY] в градусах
+    var PRESETS = {
+        "True Iso":    [35.264, 45,  "Классическая изометрия (35.264° / 45°), как в видеоиграх"],
+        "Dimetric":    [30,     45,  "Диметрия 2:1 (30° / 45°), пиксель-арт стиль (SimCity, Diablo)"],
+        "Top 45":      [45,     0,   "Вид сверху под 45° (45° / 0°)"],
+        "Cabinet":     [0,      30,  "Кабинетная проекция (0° / 30°), для технических чертежей"],
+        "Soft 25":     [25,     45,  "Мягкая изометрия 25° / 45° — менее выраженный угол"],
+        "Low 15":      [15,     45,  "Низкая камера 15° / 45° — почти фронтальный вид с лёгким наклоном"]
+    };
+
+    var ORTHO_ZOOM = 30000; // эмуляция ортографической проекции
+
+    // ====================================================================
+    // BUILD UI
+    // ====================================================================
+    function buildUI(thisObj) {
+        var win = (thisObj instanceof Panel)
+            ? thisObj
+            : new Window("palette", IC_Data.scriptName + " " + IC_Data.scriptVersion, undefined, {resizeable:true});
+
+        win.orientation = "column";
+        win.alignChildren = ["fill","top"];
+        win.spacing = 6;
+        win.margins = 10;
+        win.preferredSize.width = 270;
+
+        try { win.graphics.backgroundColor = win.graphics.newBrush(win.graphics.BrushType.SOLID_COLOR, COL.bg); } catch(e){}
+
+        // ---------- HEADER ----------
+        var header = win.add("group");
+        header.orientation = "row";
+        header.alignChildren = ["fill","center"];
+        header.spacing = 6;
+
+        var leftGrp = header.add("group");
+        leftGrp.orientation = "row";
+        leftGrp.alignment = ["left","center"];
+        leftGrp.spacing = 6;
+        var iconTxt = leftGrp.add("statictext", undefined, "\u25C6");
+        try { iconTxt.graphics.foregroundColor = iconTxt.graphics.newPen(iconTxt.graphics.PenType.SOLID_COLOR, COL.accent, 1); } catch(e){}
+        var title = leftGrp.add("statictext", undefined, "ISOMETRIC CAM");
+        try { title.graphics.foregroundColor = title.graphics.newPen(title.graphics.PenType.SOLID_COLOR, COL.text, 1); } catch(e){}
+        try { title.graphics.font = ScriptUI.newFont("dialog", "BOLD", 13); } catch(e){}
+        var verTxt = leftGrp.add("statictext", undefined, IC_Data.scriptVersion);
+        try { verTxt.graphics.foregroundColor = verTxt.graphics.newPen(verTxt.graphics.PenType.SOLID_COLOR, COL.textMuted, 1); } catch(e){}
+
+        var rightGrp = header.add("group");
+        rightGrp.orientation = "row";
+        rightGrp.alignment = ["right","center"];
+        var btnHelp = rightGrp.add("button", undefined, "?");
+        btnHelp.preferredSize = [26, 22];
+        btnHelp.helpTip = "Открыть справку";
+        styleBtn(btnHelp);
+
+        addDivider(win);
+
+        // ---------- PRESETS ----------
+        addSectionLabel(win, "ANGLE PRESETS");
+        var grpP1 = win.add("group");
+        grpP1.orientation = "row";
+        grpP1.alignChildren = ["fill","center"];
+        grpP1.spacing = 3;
+        var btnTrue   = grpP1.add("button", undefined, "True Iso");
+        var btnDim    = grpP1.add("button", undefined, "Dimetric");
+        styleBtn(btnTrue); styleBtn(btnDim);
+        btnTrue.helpTip = PRESETS["True Iso"][2];
+        btnDim.helpTip  = PRESETS["Dimetric"][2];
+
+        var grpP2 = win.add("group");
+        grpP2.orientation = "row";
+        grpP2.alignChildren = ["fill","center"];
+        grpP2.spacing = 3;
+        var btnTop    = grpP2.add("button", undefined, "Top 45");
+        var btnCab    = grpP2.add("button", undefined, "Cabinet");
+        styleBtn(btnTop); styleBtn(btnCab);
+        btnTop.helpTip = PRESETS["Top 45"][2];
+        btnCab.helpTip = PRESETS["Cabinet"][2];
+
+        var grpP3 = win.add("group");
+        grpP3.orientation = "row";
+        grpP3.alignChildren = ["fill","center"];
+        grpP3.spacing = 3;
+        var btnSoft25 = grpP3.add("button", undefined, "Soft 25");
+        var btnLow15  = grpP3.add("button", undefined, "Low 15");
+        styleBtn(btnSoft25); styleBtn(btnLow15);
+        btnSoft25.helpTip = PRESETS["Soft 25"][2];
+        btnLow15.helpTip  = PRESETS["Low 15"][2];
+
+        addDivider(win);
+
+        // ---------- CUSTOM ANGLE ----------
+        addSectionLabel(win, "CUSTOM ANGLE");
+        var grpX = win.add("group");
+        grpX.orientation = "row";
+        grpX.alignChildren = ["fill","center"];
+        var lblX = grpX.add("statictext", undefined, "Tilt X:");
+        lblX.preferredSize.width = 50;
+        styleLabel(lblX);
+        var slX = grpX.add("slider", undefined, 35.264, 0, 90);
+        slX.preferredSize.width = 110;
+        var etX = grpX.add("edittext", undefined, "35.26");
+        etX.characters = 5;
+        styleInput(etX);
+        var lblXU = grpX.add("statictext", undefined, "°");
+        styleMuted(lblXU);
+
+        var grpY = win.add("group");
+        grpY.orientation = "row";
+        grpY.alignChildren = ["fill","center"];
+        var lblY = grpY.add("statictext", undefined, "Spin Y:");
+        lblY.preferredSize.width = 50;
+        styleLabel(lblY);
+        var slY = grpY.add("slider", undefined, 45, 0, 360);
+        slY.preferredSize.width = 110;
+        var etY = grpY.add("edittext", undefined, "45");
+        etY.characters = 5;
+        styleInput(etY);
+        var lblYU = grpY.add("statictext", undefined, "°");
+        styleMuted(lblYU);
+
+        slX.onChanging = function() { etX.text = slX.value.toFixed(2); };
+        etX.onChange = function() {
+            var v = parseFloat(etX.text);
+            if (!isNaN(v) && v >= 0 && v <= 90) slX.value = v;
+            else etX.text = slX.value.toFixed(2);
+        };
+        slY.onChanging = function() { etY.text = slY.value.toFixed(0); };
+        etY.onChange = function() {
+            var v = parseFloat(etY.text);
+            if (!isNaN(v) && v >= 0 && v <= 360) slY.value = v;
+            else etY.text = slY.value.toFixed(0);
+        };
+
+        var btnApplyCustom = win.add("button", undefined, "Apply Custom Angle");
+        styleBtn(btnApplyCustom);
+
+        addDivider(win);
+
+        // ---------- OPTIONS ----------
+        addSectionLabel(win, "OPTIONS");
+        var cbAll3D = win.add("checkbox", undefined, "Включить 3D на всех слоях");
+        cbAll3D.value = true;
+        styleLabel(cbAll3D);
+
+        var cbLights = win.add("checkbox", undefined, "Добавить освещение (Ambient + Parallel)");
+        cbLights.value = false;
+        styleLabel(cbLights);
+
+        var cbFloor = win.add("checkbox", undefined, "Добавить пол-сетку (Floor Grid)");
+        cbFloor.value = false;
+        styleLabel(cbFloor);
+
+        var cbCineRenderer = win.add("checkbox", undefined, "Cinema 4D рендерер (для реальных теней)");
+        cbCineRenderer.value = false;
+        styleLabel(cbCineRenderer);
+
+        addDivider(win);
+
+        // ---------- EXTRA TOOLS ----------
+        addSectionLabel(win, "TOOLS");
+        var grpT1 = win.add("group");
+        grpT1.orientation = "row";
+        grpT1.alignChildren = ["fill","center"];
+        grpT1.spacing = 3;
+        var btnSel3D = grpT1.add("button", undefined, "Selected to 3D");
+        var btnReset = grpT1.add("button", undefined, "Reset to 2D");
+        styleBtn(btnSel3D); styleBtn(btnReset);
+
+        var grpT2 = win.add("group");
+        grpT2.orientation = "row";
+        grpT2.alignChildren = ["fill","center"];
+        grpT2.spacing = 3;
+        var btnSpin  = grpT2.add("button", undefined, "Spin Anim");
+        var btnFloor = grpT2.add("button", undefined, "Add Floor");
+        styleBtn(btnSpin); styleBtn(btnFloor);
+
+        addDivider(win);
+
+        var info = win.add("statictext", undefined,
+            "Нажми пресет — камера, контроллер и (опц.) свет создадутся за 1 клик. Существующие анимации сохраняются.",
+            {multiline:true});
+        info.preferredSize.height = 42;
+        styleMuted(info);
+
+        // ====================================================================
+        // HANDLERS
+        // ====================================================================
+        function getOptions() {
+            return {
+                all3D: cbAll3D.value,
+                lights: cbLights.value,
+                floor: cbFloor.value,
+                cineRenderer: cbCineRenderer.value
+            };
+        }
+
+        btnTrue.onClick   = function(){ setupIsometric(PRESETS["True Iso"][0], PRESETS["True Iso"][1], getOptions()); };
+        btnDim.onClick    = function(){ setupIsometric(PRESETS["Dimetric"][0], PRESETS["Dimetric"][1], getOptions()); };
+        btnTop.onClick    = function(){ setupIsometric(PRESETS["Top 45"][0],   PRESETS["Top 45"][1],   getOptions()); };
+        btnCab.onClick    = function(){ setupIsometric(PRESETS["Cabinet"][0],  PRESETS["Cabinet"][1],  getOptions()); };
+        btnSoft25.onClick = function(){ setupIsometric(PRESETS["Soft 25"][0],  PRESETS["Soft 25"][1],  getOptions()); };
+        btnLow15.onClick  = function(){ setupIsometric(PRESETS["Low 15"][0],   PRESETS["Low 15"][1],   getOptions()); };
+
+        btnApplyCustom.onClick = function(){
+            var x = parseFloat(etX.text);
+            var y = parseFloat(etY.text);
+            if (isNaN(x) || isNaN(y)) { alert("Введи числовые значения углов."); return; }
+            setupIsometric(x, y, getOptions());
+        };
+
+        btnSel3D.onClick = function(){ convertSelectedTo3D(); };
+        btnReset.onClick = function(){ resetTo2D(); };
+        btnSpin.onClick  = function(){ addSpinAnimation(); };
+        btnFloor.onClick = function(){ addFloorGrid(); };
+
+        btnHelp.onClick = function(){ showHelpWindow(); };
+
+        win.layout.layout(true);
+        win.layout.resize();
+        return win;
+    }
+
+    // ====================================================================
+    // HELP WINDOW
+    // ====================================================================
+    function showHelpWindow() {
+        var hw = new Window("dialog", "Isometric Cam — справка", undefined);
+        hw.orientation = "column";
+        hw.alignChildren = ["fill","top"];
+        hw.spacing = 8;
+        hw.margins = 14;
+        hw.preferredSize = [580, 620];
+        try { hw.graphics.backgroundColor = hw.graphics.newBrush(hw.graphics.BrushType.SOLID_COLOR, COL.bg); } catch(e){}
+
+        var hdr = hw.add("group");
+        hdr.orientation = "row";
+        hdr.alignChildren = ["left","center"];
+        var hIcon = hdr.add("statictext", undefined, "\u25C6");
+        try { hIcon.graphics.foregroundColor = hIcon.graphics.newPen(hIcon.graphics.PenType.SOLID_COLOR, COL.accent, 1); } catch(e){}
+        var hTitle = hdr.add("statictext", undefined, "ISOMETRIC CAM — Памятка");
+        try { hTitle.graphics.foregroundColor = hTitle.graphics.newPen(hTitle.graphics.PenType.SOLID_COLOR, COL.text, 1); } catch(e){}
+        try { hTitle.graphics.font = ScriptUI.newFont("dialog", "BOLD", 14); } catch(e){}
+
+        var div = hw.add("panel"); div.alignment = ["fill","top"]; div.preferredSize.height = 1;
+
+        var helpText =
+            "ЧТО ДЕЛАЕТ СКРИПТ\r" +
+            "Превращает обычную композицию в 3D-сцену с изометрической камерой за один клик. Существующие слои, анимации, эффекты — НЕ изменяются. Просто добавляется камера, Null-контроллер и (опционально) свет.\r" +
+            "\r" +
+            "ПОРЯДОК РАБОТЫ\r" +
+            "1. Открой композицию, с которой хочешь работать.\r" +
+            "2. Выбери пресет угла или задай свой через Custom Angle.\r" +
+            "3. Настрой опции (3D на всех слоях, свет, пол).\r" +
+            "4. Нажми кнопку пресета — за 1 клик создаётся вся изометрия.\r" +
+            "\r" +
+            "СОЗДАЁТСЯ В КОМПОЗИЦИИ\r" +
+            "  ISO_Camera        — камера с большим Zoom (эмуляция ортографии)\r" +
+            "  ISO_Controller    — Null-объект, родитель камеры. Крути его Rotation, чтобы вращать всю сцену\r" +
+            "  ISO_Ambient       — общий свет (если включено)\r" +
+            "  ISO_Parallel      — направленный свет с тенями (если включено)\r" +
+            "  ISO_Floor         — пол-сетка для референса (если включено)\r" +
+            "\r" +
+            "ПРЕСЕТЫ УГЛОВ\r" +
+            "  True Iso  (35.264° / 45°) — классическая видеоигровая изометрия\r" +
+            "  Dimetric  (30° / 45°)     — пиксель-арт изометрия 2:1 (SimCity, Diablo)\r" +
+            "  Top 45    (45° / 0°)      — вид сверху под углом\r" +
+            "  Cabinet   (0° / 30°)      — техническая проекция\r" +
+            "  Soft 25   (25° / 45°)     — мягкая изометрия для UI/инфографики\r" +
+            "  Low 15    (15° / 45°)     — почти фронтальный с лёгким наклоном\r" +
+            "\r" +
+            "ОПЦИИ\r" +
+            "  Включить 3D на всех слоях   — добавляет 3D switch всем слоям композиции.\r" +
+            "                                Без этого слои останутся плоскими 2D и камера не будет на них влиять.\r" +
+            "  Добавить освещение           — Ambient (мягкий заливающий) + Parallel (направленный с тенями).\r" +
+            "                                Для теней нужны Material Options: Casts Shadows = On на слоях.\r" +
+            "  Добавить пол-сетку           — Shape Layer с сеткой 20x20 ячеек как референс пола.\r" +
+            "                                Полезно для понимания пространства.\r" +
+            "  Cinema 4D рендерер           — переключает композицию на C4D Renderer.\r" +
+            "                                Даёт настоящие тени и материалы, но медленнее.\r" +
+            "\r" +
+            "ИНСТРУМЕНТЫ (TOOLS)\r" +
+            "  Selected to 3D  — включает 3D switch только на выделенных слоях\r" +
+            "  Reset to 2D     — удаляет камеру/контроллер/свет, выключает 3D на всех слоях\r" +
+            "  Spin Anim       — добавляет ключи вращения Y на контроллер (0° -> 360° за длительность композиции),\r" +
+            "                    вся сцена крутится\r" +
+            "  Add Floor       — добавляет пол-сетку без полной пересборки сцены\r" +
+            "\r" +
+            "ВАЖНО ПРО СУЩЕСТВУЮЩИЕ СЛОИ\r" +
+            "- Анимации Position/Scale/Rotation сохраняются, AE автоматически добавит Z=0 ко всем кадрам.\r" +
+            "- Эффекты, маски, родительские связи — без изменений.\r" +
+            "- Если в композиции уже есть камера — скрипт спросит, что делать.\r" +
+            "- Откат: Ctrl/Cmd+Z или кнопка Reset to 2D.\r" +
+            "\r" +
+            "СОВЕТЫ\r" +
+            "- Для красивой изометрии в видеоклипах: True Iso + Cinema 4D рендерер + освещение + пол-сетка.\r" +
+            "- Для быстрой 2D-инфографики с лёгким объёмом: Soft 25 без C4D рендерера.\r" +
+            "- Чтобы крутить камеру вокруг сцены: меняй Rotation Y у ISO_Controller (не у самой камеры!).\r" +
+            "- Чтобы зум-эффект: анимируй Scale у ISO_Controller или Z-position у камеры.\r" +
+            "- 2D-слои в 3D-сцене остаются плоскими карточками. Для настоящего 3D нужны Element 3D или собирать объекты из плоских слоёв.\r" +
+            "\r" +
+            "ОГРАНИЧЕНИЯ\r" +
+            "- AE не имеет настоящей ортографической проекции — эмулируется через Zoom = 30000.\r" +
+            "  Если объект слишком близко к камере — может появиться лёгкое искажение.\r" +
+            "  Решение: держи сцену в районе центра композиции.\r" +
+            "- Cinema 4D рендерер не поддерживает некоторые эффекты (например, Shape Layers с градиентами рендерятся как Classic 3D).";
+
+        var et = hw.add("edittext", undefined, helpText, {multiline:true, readonly:true, scrolling:true});
+        et.preferredSize = [550, 490];
+        try { et.graphics.backgroundColor = et.graphics.newBrush(et.graphics.BrushType.SOLID_COLOR, COL.bgInput); } catch(e){}
+        try { et.graphics.foregroundColor = et.graphics.newPen(et.graphics.PenType.SOLID_COLOR, COL.text, 1); } catch(e){}
+
+        var btnClose = hw.add("button", undefined, "Закрыть");
+        btnClose.preferredSize.height = 30;
+        btnClose.onClick = function(){ hw.close(); };
+
+        hw.center();
+        hw.show();
+    }
+
+    // ====================================================================
+    // STYLE HELPERS
+    // ====================================================================
+    function addDivider(parent) {
+        var d = parent.add("panel");
+        d.alignment = ["fill","top"];
+        d.preferredSize.height = 1;
+    }
+    function addSectionLabel(parent, text) {
+        var s = parent.add("statictext", undefined, text);
+        try { s.graphics.foregroundColor = s.graphics.newPen(s.graphics.PenType.SOLID_COLOR, COL.accent, 1); } catch(e){}
+        try { s.graphics.font = ScriptUI.newFont("dialog", "BOLD", 10); } catch(e){}
+        return s;
+    }
+    function styleLabel(c) {
+        try { c.graphics.foregroundColor = c.graphics.newPen(c.graphics.PenType.SOLID_COLOR, COL.text, 1); } catch(e){}
+    }
+    function styleMuted(c) {
+        try { c.graphics.foregroundColor = c.graphics.newPen(c.graphics.PenType.SOLID_COLOR, COL.textMuted, 1); } catch(e){}
+    }
+    function styleBtn(b) {
+        b.preferredSize.height = 26;
+        try { b.graphics.foregroundColor = b.graphics.newPen(b.graphics.PenType.SOLID_COLOR, COL.text, 1); } catch(e){}
+    }
+    function styleInput(e) {
+        try { e.graphics.backgroundColor = e.graphics.newBrush(e.graphics.BrushType.SOLID_COLOR, COL.bgInput); } catch(er){}
+        try { e.graphics.foregroundColor = e.graphics.newPen(e.graphics.PenType.SOLID_COLOR, COL.text, 1); } catch(er){}
+    }
+
+    // ====================================================================
+    // CORE
+    // ====================================================================
+    function getActiveComp() {
+        var c = app.project.activeItem;
+        if (!(c && c instanceof CompItem)) { alert("Выдели композицию."); return null; }
+        return c;
+    }
+
+    function findLayerByName(comp, name) {
+        for (var i=1; i<=comp.numLayers; i++) {
+            if (comp.layer(i).name === name) return comp.layer(i);
+        }
+        return null;
+    }
+
+    function removeIfExists(comp, name) {
+        var L = findLayerByName(comp, name);
+        if (L) L.remove();
+    }
+
+    // ---------- ОСНОВНОЙ СЕТАП ИЗОМЕТРИИ ----------
+    function setupIsometric(angleX, angleY, opts) {
+        app.beginUndoGroup("Isometric Camera Setup");
+        try {
+            var comp = getActiveComp(); if (!comp) return;
+
+            // Проверка существующей камеры
+            var existingCam = null;
+            for (var i=1; i<=comp.numLayers; i++) {
+                var L = comp.layer(i);
+                if (L instanceof CameraLayer && L.name !== "ISO_Camera") {
+                    existingCam = L;
+                    break;
+                }
+            }
+            if (existingCam) {
+                var doReplace = confirm("В композиции уже есть камера \"" + existingCam.name + "\".\r" +
+                                        "Заменить её на изометрическую?\r\r" +
+                                        "Yes = удалить старую\rNo = добавить новую (старая выключится)");
+                if (doReplace) existingCam.remove();
+                else existingCam.enabled = false;
+            }
+
+            // Удаляем старые ISO-объекты, если они уже есть (повторный запуск)
+            removeIfExists(comp, "ISO_Camera");
+            removeIfExists(comp, "ISO_Controller");
+            removeIfExists(comp, "ISO_Ambient");
+            removeIfExists(comp, "ISO_Parallel");
+            if (opts.floor) removeIfExists(comp, "ISO_Floor");
+
+            // Cinema 4D рендерер
+            if (opts.cineRenderer) {
+                try { comp.renderer = "ADBE Picasso"; } catch(e) {
+                    // в новых версиях AE — другое имя
+                    try { comp.renderer = "ADBE Ernst"; } catch(e2) {}
+                }
+            }
+
+            var cx = comp.width / 2;
+            var cy = comp.height / 2;
+
+            // 1. Создаём Null-контроллер
+            var ctrl = comp.layers.addNull(comp.duration);
+            ctrl.name = "ISO_Controller";
+            ctrl.threeDLayer = true;
+            ctrl.label = 9; // зелёный
+            ctrl.property("ADBE Transform Group").property("ADBE Position").setValue([cx, cy, 0]);
+
+            // 2. Создаём камеру (One-Node)
+            var cam = comp.layers.addCamera("ISO_Camera", [cx, cy]);
+            cam.label = 11; // оранжевый
+            // Позиционируем камеру далеко по Z, чтобы при большом Zoom получалась ортографическая проекция
+            var camZ = -3000;
+            cam.property("ADBE Transform Group").property("ADBE Position").setValue([cx, cy, camZ]);
+            cam.property("ADBE Transform Group").property("ADBE Point of Interest").setValue([cx, cy, 0]);
+
+            // Zoom для эмуляции ортографии
+            try {
+                cam.property("ADBE Camera Options Group").property("ADBE Camera Zoom").setValue(ORTHO_ZOOM);
+            } catch(eZ) {}
+
+            // Камера = ребёнок контроллера
+            cam.parent = ctrl;
+
+            // 3. Поворачиваем контроллер на нужные углы
+            ctrl.property("ADBE Transform Group").property("ADBE Rotate X").setValue(angleX);
+            ctrl.property("ADBE Transform Group").property("ADBE Rotate Y").setValue(angleY);
+            ctrl.property("ADBE Transform Group").property("ADBE Rotate Z").setValue(0);
+
+            // 4. Включить 3D на всех слоях
+            if (opts.all3D) {
+                for (var j=1; j<=comp.numLayers; j++) {
+                    var lj = comp.layer(j);
+                    if (lj === cam || lj === ctrl) continue;
+                    if (lj instanceof CameraLayer || lj instanceof LightLayer) continue;
+                    if (lj.nullLayer && lj.name.indexOf("ISO_") === 0) continue;
+                    try { lj.threeDLayer = true; } catch(eThree) {}
+                }
+            }
+
+            // 5. Свет
+            if (opts.lights) {
+                var amb = comp.layers.addLight("ISO_Ambient", [cx, cy]);
+                amb.lightType = LightType.AMBIENT;
+                amb.property("ADBE Light Options Group").property("ADBE Light Intensity").setValue(40);
+                amb.label = 14; // светло-фиолетовый
+
+                var par = comp.layers.addLight("ISO_Parallel", [cx, cy]);
+                par.lightType = LightType.PARALLEL;
+                par.property("ADBE Transform Group").property("ADBE Position").setValue([cx - 400, cy - 600, -400]);
+                par.property("ADBE Transform Group").property("ADBE Point of Interest").setValue([cx, cy, 0]);
+                par.property("ADBE Light Options Group").property("ADBE Light Intensity").setValue(120);
+                try { par.property("ADBE Light Options Group").property("ADBE Casts Shadows").setValue(1); } catch(eS) {}
+                try { par.property("ADBE Light Options Group").property("ADBE Light Shadow Darkness").setValue(60); } catch(eSD) {}
+                par.label = 14;
+            }
+
+            // 6. Floor Grid
+            if (opts.floor) addFloorGridInternal(comp);
+
+        } catch (err) {
+            alert("Setup error: " + err.toString());
+        }
+        app.endUndoGroup();
+    }
+
+    // ---------- SELECTED TO 3D ----------
+    function convertSelectedTo3D() {
+        app.beginUndoGroup("Selected to 3D");
+        try {
+            var comp = getActiveComp(); if (!comp) return;
+            var sel = comp.selectedLayers;
+            if (sel.length === 0) { alert("Выдели слои."); return; }
+            var count = 0;
+            for (var i=0; i<sel.length; i++) {
+                var L = sel[i];
+                if (L instanceof CameraLayer || L instanceof LightLayer) continue;
+                try { L.threeDLayer = true; count++; } catch(e) {}
+            }
+            alert("Включён 3D switch на " + count + " слоях.");
+        } catch (err) { alert("Error: " + err.toString()); }
+        app.endUndoGroup();
+    }
+
+    // ---------- RESET TO 2D ----------
+    function resetTo2D() {
+        app.beginUndoGroup("Reset to 2D");
+        try {
+            var comp = getActiveComp(); if (!comp) return;
+            var confirmReset = confirm("Удалить камеру, контроллер, свет, пол и выключить 3D на всех слоях?");
+            if (!confirmReset) return;
+
+            // Удалить ISO_* слои
+            var toRemove = ["ISO_Camera","ISO_Controller","ISO_Ambient","ISO_Parallel","ISO_Floor"];
+            for (var i=0; i<toRemove.length; i++) removeIfExists(comp, toRemove[i]);
+
+            // Выключить 3D на всех слоях
+            for (var j=1; j<=comp.numLayers; j++) {
+                var L = comp.layer(j);
+                if (L instanceof CameraLayer || L instanceof LightLayer) continue;
+                try { L.threeDLayer = false; } catch(e) {}
+            }
+
+            // Вернуть Classic 3D рендерер
+            try { comp.renderer = "ADBE Standard 3d"; } catch(eR) {}
+
+        } catch (err) { alert("Reset error: " + err.toString()); }
+        app.endUndoGroup();
+    }
+
+    // ---------- SPIN ANIMATION ----------
+    function addSpinAnimation() {
+        app.beginUndoGroup("Spin Animation");
+        try {
+            var comp = getActiveComp(); if (!comp) return;
+            var ctrl = findLayerByName(comp, "ISO_Controller");
+            if (!ctrl) { alert("Не найден ISO_Controller. Сначала примени пресет камеры."); return; }
+            var rotY = ctrl.property("ADBE Transform Group").property("ADBE Rotate Y");
+            var startY = rotY.value;
+            rotY.setValueAtTime(0,             startY);
+            rotY.setValueAtTime(comp.duration, startY + 360);
+            // линейная интерполяция
+            var n = rotY.numKeys;
+            for (var k=1; k<=n; k++) {
+                rotY.setInterpolationTypeAtKey(k, KeyframeInterpolationType.LINEAR, KeyframeInterpolationType.LINEAR);
+            }
+        } catch (err) { alert("Spin error: " + err.toString()); }
+        app.endUndoGroup();
+    }
+
+    // ---------- FLOOR GRID ----------
+    function addFloorGrid() {
+        app.beginUndoGroup("Add Floor Grid");
+        try {
+            var comp = getActiveComp(); if (!comp) return;
+            removeIfExists(comp, "ISO_Floor");
+            addFloorGridInternal(comp);
+        } catch (err) { alert("Floor error: " + err.toString()); }
+        app.endUndoGroup();
+    }
+
+    function addFloorGridInternal(comp) {
+        var cx = comp.width / 2;
+        var cy = comp.height / 2;
+
+        var floor = comp.layers.addShape();
+        floor.name = "ISO_Floor";
+        floor.threeDLayer = true;
+        floor.label = 6; // голубой
+
+        var contents = floor.property("ADBE Root Vectors Group");
+
+        // Горизонтальные и вертикальные линии
+        var gridSize = Math.max(comp.width, comp.height) * 2;
+        var cells = 20;
+        var step = gridSize / cells;
+        var halfGrid = gridSize / 2;
+
+        var grpGrid = contents.addProperty("ADBE Vector Group");
+        grpGrid.name = "Grid Lines";
+        var gridContents = grpGrid.property("ADBE Vectors Group");
+
+        for (var i=0; i<=cells; i++) {
+            var offset = -halfGrid + i * step;
+
+            // Горизонтальная линия
+            var pathH = gridContents.addProperty("ADBE Vector Shape - Group");
+            pathH.name = "H" + i;
+            var shH = new Shape();
+            shH.vertices = [[-halfGrid, offset], [halfGrid, offset]];
+            shH.inTangents = [[0,0],[0,0]];
+            shH.outTangents = [[0,0],[0,0]];
+            shH.closed = false;
+            pathH.property("ADBE Vector Shape").setValue(shH);
+
+            // Вертикальная линия
+            var pathV = gridContents.addProperty("ADBE Vector Shape - Group");
+            pathV.name = "V" + i;
+            var shV = new Shape();
+            shV.vertices = [[offset, -halfGrid], [offset, halfGrid]];
+            shV.inTangents = [[0,0],[0,0]];
+            shV.outTangents = [[0,0],[0,0]];
+            shV.closed = false;
+            pathV.property("ADBE Vector Shape").setValue(shV);
+        }
+
+        // Stroke
+        var stroke = gridContents.addProperty("ADBE Vector Graphic - Stroke");
+        stroke.property("ADBE Vector Stroke Color").setValue([0.4, 0.4, 0.45, 1]);
+        stroke.property("ADBE Vector Stroke Width").setValue(2);
+        stroke.property("ADBE Vector Stroke Opacity").setValue(50);
+
+        // Поворачиваем пол горизонтально (Rotation X = -90°)
+        floor.property("ADBE Transform Group").property("ADBE Position").setValue([cx, cy, 0]);
+        floor.property("ADBE Transform Group").property("ADBE Rotate X").setValue(-90);
+
+        // Поставить пол в самый низ
+        floor.moveToEnd();
+    }
+
+    // ====================================================================
+    // RUN
+    // ====================================================================
+    if (parseFloat(app.version) < 8.0) {
+        alert("Требуется After Effects CS3 или новее.");
+    } else {
+        var myWin = buildUI(this);
+        if (myWin instanceof Window) { myWin.center(); myWin.show(); }
+        else { myWin.layout.layout(true); }
+    }
+}
