@@ -1,0 +1,361 @@
+═══════════════════════════════════════
+
+REFERENCE: D35
+
+═══════════════════════════════════════
+
+1. META
+
+
+    file_name: D35.gif
+
+    duration: ~2.0 sec
+
+    loop: yes / no / seamless
+
+    fps: 30
+
+    resolution: 1920x1080
+
+    format: gif / mp4
+
+
+2. SCENE
+
+
+    background_color: "#1a2b2e" (dark teal-grey)
+
+    canvas_orientation: landscape
+
+    camera: static
+
+    objects_count: 7
+
+    main_subject: Rounded rectangle icon with central diamond in top-left quadrant
+
+
+3. OBJECTS
+
+Object A: Main Icon Container
+
+
+    type: shape
+
+    shape: rounded_rect
+
+    size_relative: ~15% height of canvas
+
+    position: top-left quadrant
+
+    fill: "#d9d9d9" (light grey)
+
+    stroke: "#FF8800" (orange), width ~6px
+
+    corner_radius: ~15px
+
+
+Object B: Central Diamond
+
+
+    type: shape
+
+    shape: rotated_square (45°)
+
+    size_relative: ~60% of main icon
+
+    position: center of main icon
+
+    fill: "#FFFFFF" (white)
+
+    stroke: none
+
+
+Object C: Internal Symbol
+
+
+    type: shape/text
+
+    shape: custom_path (interlocking N/Z geometric pattern)
+
+    size_relative: ~40% of central diamond
+
+    position: center of central diamond
+
+    fill: "#000000" (black)
+
+    stroke: none
+
+
+Object D: Status Bar
+
+
+    type: shape
+
+    shape: rectangle
+
+    size_relative: ~80% width of main icon, thin height
+
+    position: bottom edge of main icon's light field
+
+    fill: "#FF8800" (orange)
+
+    stroke: none
+
+
+Object E: Checkmark Box
+
+
+    type: shape
+
+    shape: rounded_rect
+
+    size_relative: ~20% of main icon
+
+    position: top-right corner overlapping main icon
+
+    fill: "#FF8800" (orange)
+
+    stroke: "#FFFFFF" (white checkmark)
+
+
+Object F: Expanding Diamond Outline
+
+
+    type: shape
+
+    shape: rotated_square (45°)
+
+    size_relative: starts at central diamond size, grows to ~150% of main icon
+
+    position: center, expands outward
+
+    fill: none
+
+    stroke: "#FFFFFF" (white), width 2-3px, fades with expansion
+
+
+Object G: Header Line with Moving Dash
+
+
+    type: shape
+
+    shape: line/rectangle
+
+    size_relative: full width, thin height
+
+    position: top of dark panel, above icon
+
+    fill: "#3a4a4e" (subtle grey)
+
+    stroke: none
+
+
+4. ANIMATION
+
+Animation 1: Icon Pop Effect
+
+
+    target_property: Scale Transform
+
+    keyframes:
+
+        0.0s: scale=100%
+
+        0.1s: scale=105-110%
+
+        0.3s: scale=100%
+
+
+    easing: easeOutBack
+
+    loop: cycle
+
+    direction: in-out
+
+
+Animation 2: Expanding Diamond Pulse
+
+
+    target_property: Scale + Opacity + Stroke Width
+
+    keyframes:
+
+        0.0s: scale=1.0, opacity=100%, width=2px
+
+        0.3s: scale=1.5, opacity=0%, width=4px
+
+        1.5s: scale=1.0, opacity=100%, width=2px
+
+
+    easing: easeOut
+
+    loop: cycle
+
+    direction: one-way (expands and fades)
+
+
+Animation 3: Bloom/Flash Effect
+
+
+    target_property: Glow Intensity + Opacity
+
+    keyframes:
+
+        0.0s: glow=0, opacity=0%
+
+        0.05s: glow=100%, opacity=100% (peak)
+
+        0.4s: glow=0, opacity=0%
+
+
+    easing: easeOut
+
+    loop: cycle
+
+    direction: one-way
+
+
+Animation 4: Light Sweep/Glint
+
+
+    target_property: Position + Opacity
+
+    keyframes:
+
+        0.0s: position=top-left corner of symbol, opacity=0%
+
+        0.2s: position=bottom-right corner of symbol, opacity=100%
+
+        0.4s: position=bottom-right corner of symbol, opacity=0%
+
+
+    easing: linear
+
+    loop: cycle
+
+    direction: one-way
+
+
+Animation 5: Header Dash Translate
+
+
+    target_property: Position X
+
+    keyframes:
+
+        0.0s: x=0%
+
+        0.5s: x=100%
+
+        0.5s: x=0% (reset)
+
+
+    easing: linear
+
+    loop: cycle
+
+    direction: one-way
+
+
+5. EFFECTS
+
+
+    glow: yes, on central diamond and checkmark, white color, intensity pulses with flash
+
+    blur: slight motion blur on expanding outline for speed emphasis
+
+    shadow: soft drop shadow on main icon, offset 0/4, blur 20, opacity ~30%
+
+    distortion: no
+
+    color_grading: none / subtle warm tint on highlights
+
+    particles: no
+
+
+6. TIMING & RHYTHM
+
+
+    total_cycle: ~2.0 sec
+
+    pause_between_loops: ~0.5 sec
+
+    phases:
+
+        phase_1 (0-10%): flash/bloom peak
+
+        phase_2 (10-25%): expansion begins
+
+        phase_3 (25-50%): ring expands outward, glow fades
+
+        phase_4 (50-75%): return to idle, glint sweep
+
+        phase_5 (75-100%): header dash moves, reset
+
+
+    accent_moments: peak at 5% (flash), peak at 50% (ring fully expanded)
+
+
+7. MOOD & STYLE
+
+
+    vibe: tech
+
+    reference_style: Material Design / modern UI
+
+    color_palette: duotone (orange accent on dark teal)
+
+    complexity: medium
+
+
+8. KEY FRAMES
+
+
+    frame_0% (start): Orange-outlined icon with white diamond and black symbol, static
+
+    frame_5%: Bright white flash/bloom on diamond and checkmark, peak intensity
+
+    frame_15%: White diamond outline begins expanding from center
+
+    frame_30%: Ring expanded ~75%, white glow fading, icon pops slightly
+
+    frame_50% (midpoint): Ring at maximum size (~150% icon), faded to near-transparent
+
+    frame_70%: Glint sweep across black symbol, ring fully faded
+
+    frame_85%: Header line dash visible, icon returning to normal scale
+
+    frame_100% (end = start): Icon reset, ring invisible, ready for next cycle
+
+
+9. AE IMPLEMENTATION HINTS
+
+
+    suggested_layers: 1 shape layer for icon, 1 shape layer for expanding ring, 1 null for flash control
+
+    suggested_effects: Glow (Outer Glow), Motion Blur on ring, Drop Shadow on icon
+
+    suggested_expressions: loopOut("cycle") for pop, loopOut("offset") for dash
+
+    complexity: medium
+
+    estimated_lines: ~80
+
+
+10. NOTES & AMBIGUITIES
+
+
+    Loop timing appears to be ~2 seconds but exact duration unclear from single viewing
+
+    Header line with dash is subtle and may be part of UI rather than animation subject
+
+    The "N/Z" symbol inside diamond could not be precisely identified
+
+    Background appears to have two-tone split (dark panel + light grey grid) - not part of main animation subject
+
+    Small checkmark box overlap on icon may be decorative UI element rather than animated part
+
+    Bloom effect appears to affect multiple objects simultaneously - may require pre-comp or adjustment layer
+
+
+═══════════════════════════════════════
