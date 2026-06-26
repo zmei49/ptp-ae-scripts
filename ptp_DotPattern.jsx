@@ -1765,528 +1765,238 @@
 })(this);
 
 
-Патч — заменить функции в ptp_DotPattern.jsx
 
-Найди и замени следующие блоки целиком.
-1. Coverage filters (новые / переписанные)
 
-// === COVERAGE: STRIP ===
-function passesCoverageStrip(pt, info, cov, opts) {
-    // cov.strip = {top, bottom, left, right, center}
-    if (!cov.strip) return false;
-    var s = cov.strip;
-    if (!s.top && !s.bottom && !s.left && !s.right && !s.center) return false;
 
-    var cx = info.cx, cy = info.cy;
-    var halfW = info.w / 2;
-    var halfH = info.h / 2;
-    var pad = opts.padding;
-    var spread = opts.spread;
-    var buf = opts.microSpacing * 2; // буферная зона для Center
 
-    var x = pt[0], y = pt[1];
-    var dx = x - cx, dy = y - cy;
 
-    // Center buffer: кольцо толщиной buf вплотную к границе объекта по периметру
-    if (s.center) {
-        var nearLeft   = (x >= cx - halfW - buf) && (x <= cx - halfW + buf) && (y >= cy - halfH - buf) && (y <= cy + halfH + buf);
-        var nearRight  = (x >= cx + halfW - buf) && (x <= cx + halfW + buf) && (y >= cy - halfH - buf) && (y <= cy + halfH + buf);
-        var nearTop    = (y >= cy - halfH - buf) && (y <= cy - halfH + buf) && (x >= cx - halfW - buf) && (x <= cx + halfW + buf);
-        var nearBottom = (y >= cy + halfH - buf) && (y <= cy + halfH + buf) && (x >= cx - halfW - buf) && (x <= cx + halfW + buf);
-        if (nearLeft || nearRight || nearTop || nearBottom) return true;
-    }
+// ============================================================
+// ptp_DotPattern.jsx
+// v1.2 — v1.0.1 base + Along Path mode (Mask / Shape path)
+//       Coverage Top/Down side only in Along Path
+// Author: ptp toolkit
+// Install: Save into "Support Files/Scripts/ScriptUI Panels/"
+// Run via: Window -> ptp_DotPattern.jsx
+// ============================================================
 
-    // Top strip: строго над объектом, ширина = ширина объекта + spread по бокам? Нет — Вариант 1: строго над
-    // X ∈ [cx - halfW - spread, cx + halfW + spread], Y ∈ [cy - halfH - spread - pad, cy - halfH - pad]
-    if (s.top) {
-        if (y < cy - halfH - pad && y >= cy - halfH - pad - spread &&
-            x >= cx - halfW - spread && x <= cx + halfW + spread) {
-            // исключаем углы, чтобы не пересекаться с Left/Right (Вариант 1: только над объектом)
-            // строго над: X в пределах объекта
-            if (x >= cx - halfW && x <= cx + halfW) return true;
-            // боковые части полосы — только если включены Left/Right соответственно
-            if (x < cx - halfW && s.left) return true;
-            if (x > cx + halfW && s.right) return true;
-        }
-    }
-    if (s.bottom) {
-        if (y > cy + halfH + pad && y <= cy + halfH + pad + spread &&
-            x >= cx - halfW - spread && x <= cx + halfW + spread) {
-            if (x >= cx - halfW && x <= cx + halfW) return true;
-            if (x < cx - halfW && s.left) return true;
-            if (x > cx + halfW && s.right) return true;
-        }
-    }
-    if (s.left) {
-        if (x < cx - halfW - pad && x >= cx - halfW - pad - spread &&
-            y >= cy - halfH - spread && y <= cy + halfH + spread) {
-            if (y >= cy - halfH && y <= cy + halfH) return true;
-            if (y < cy - halfH && s.top) return true;
-            if (y > cy + halfH && s.bottom) return true;
-        }
-    }
-    if (s.right) {
-        if (x > cx + halfW + pad && x <= cx + halfW + pad + spread &&
-            y >= cy - halfH - spread && y <= cy + halfH + spread) {
-            if (y >= cy - halfH && y <= cy + halfH) return true;
-            if (y < cy - halfH && s.top) return true;
-            if (y > cy + halfH && s.bottom) return true;
-        }
-    }
+(function ptp_DotPattern(thisObj) {
 
-    return false;
-}
-
-// === COVERAGE: ARC ===
-function passesCoverageArc(pt, info, cov, arcAngle) {
-    if (!cov.arc) return false;
-    var a = cov.arc;
-    if (!a.top && !a.bottom && !a.left && !a.right && !a.center) return false;
-
-    var cx = info.cx, cy = info.cy;
-    var dx = pt[0] - cx;
-    var dy = pt[1] - cy;
-    // угол в градусах: 0° = вправо, 90° = вниз (AE Y направлен вниз), -90° = вверх
-    var ang = Math.atan2(dy, dx) * 180 / Math.PI;
-    // нормализуем к [0, 360)
-    if (ang < 0) ang += 360;
-
-    var half = arcAngle / 2;
-    var centerBoost = a.center ? 10 : 0; // расширение сектора при ◆
-
-    // Top center = 270° (вверх в AE координатах)
-    // Right center = 0°
-    // Bottom center = 90°
-    // Left center = 180°
-    function inSector(centerDeg, hh) {
-        var d = Math.abs(ang - centerDeg);
-        if (d > 180) d = 360 - d;
-        return d <= (hh + centerBoost);
-    }
-
-    if (a.top    && inSector(270, half)) return true;
-    if (a.right  && inSector(0,   half)) return true;
-    if (a.bottom && inSector(90,  half)) return true;
-    if (a.left   && inSector(180, half)) return true;
-
-    return false;
-}
-
-// Объединяющая функция
-function passesCoverageAround(pt, info, cov, opts) {
-    // OR: точка проходит если её принимает Strip ИЛИ Arc
-    if (passesCoverageStrip(pt, info, cov, opts)) return true;
-    if (passesCoverageArc(pt, info, cov, opts.arcAngle)) return true;
-    return false;
-}
-
-2. generateAroundPattern — генерация полного поля и фильтрация
-
-Заменить целиком:
-
-function generateAroundPattern(info, opts) {
-    var cx = info.cx, cy = info.cy;
-    var halfW = info.w / 2, halfH = info.h / 2;
-    var pad = opts.padding;
-    var spread = opts.spread;
-    var spacing = opts.microSpacing;
-
-    // Генерим прямоугольное поле точек вокруг объекта в максимальном bbox: 
-    // от (cx - halfW - pad - spread) до (cx + halfW + pad + spread) — и фильтруем
-    var x0 = cx - halfW - pad - spread;
-    var x1 = cx + halfW + pad + spread;
-    var y0 = cy - halfH - pad - spread;
-    var y1 = cy + halfH + pad + spread;
-
-    var allPoints = [];
-    var maxOffset = pad + spread;
-
-    for (var y = y0; y <= y1; y += spacing) {
-        for (var x = x0; x <= x1; x += spacing) {
-            // пропуск внутренней области (внутри объекта + padding)
-            if (x > cx - halfW - pad && x < cx + halfW + pad &&
-                y > cy - halfH - pad && y < cy + halfH + pad) continue;
-
-            var pt = [x, y];
-            if (!passesCoverageAround(pt, info, opts.coverage, opts)) continue;
-
-            // density (random skip)
-            if (Math.random() > opts.density) continue;
-
-            // расчёт прозрачности по расстоянию до ближайшей точки границы объекта
-            var distX = Math.max(0, Math.abs(x - cx) - halfW);
-            var distY = Math.max(0, Math.abs(y - cy) - halfH);
-            var dist = Math.sqrt(distX * distX + distY * distY);
-            var distFromPad = Math.max(0, dist - pad);
-            var t = Math.min(1, distFromPad / spread);
-            var op = opts.noFade ? 1 : (1 - falloff(t, opts.falloffType));
-
-            allPoints.push({ pos: pt, opacity: op, distRank: t });
-        }
-    }
-
-    // Отделяем accent points: выбираем кольца Inner/Middle/Outer по distRank
-    var microPts = [];
-    var accentPts = [];
-
-    var ringTol = 0.12; // ширина "кольца" вокруг каждого target distRank
-    var targets = [];
-    if (opts.accentInner)  targets.push(0.0);
-    if (opts.accentMiddle) targets.push(0.5);
-    if (opts.accentOuter)  targets.push(1.0);
-
-    var accentCounter = 0;
-    for (var i = 0; i < allPoints.length; i++) {
-        var p = allPoints[i];
-        var isAccent = false;
-        if (targets.length > 0) {
-            for (var k = 0; k < targets.length; k++) {
-                if (Math.abs(p.distRank - targets[k]) < ringTol) {
-                    accentCounter++;
-                    if (accentCounter % opts.accentEveryN === 0) {
-                        isAccent = true;
-                    }
-                    break;
-                }
-            }
-        }
-        if (isAccent) accentPts.push(p);
-        else microPts.push(p);
-    }
-
-    return { micro: microPts, accent: accentPts };
-}
-
-3. generateAlongPattern — добавлен фильтр по нормали + useObjColor
-
-Заменить целиком:
-
-function generateAlongPattern(samples, opts, info) {
-    // samples = [{pos:[x,y], tangent:[tx,ty], normal:[nx,ny], cumLen:L}, ...]
-    var spread = opts.spread;
-    var spacing = opts.microSpacing;
-    var pad = opts.padding;
-    var steps = Math.ceil(spread / spacing);
-
-    var microPts = [];
-    var accentPts = [];
-    var accentSpacing = 60; // px по дуге
-    var lastAccentLen = -accentSpacing;
-
-    var cov = opts.coverage;
-    // В Along Path работают только top/bottom как стороны нормали
-    var allowPos = cov.strip && (cov.strip.top || cov.strip.center) ||
-                   cov.arc   && (cov.arc.top   || cov.arc.center);
-    var allowNeg = cov.strip && (cov.strip.bottom || cov.strip.center) ||
-                   cov.arc   && (cov.arc.bottom   || cov.arc.center);
-    // если вообще ничего не выбрано — обе стороны (fallback)
-    if (!allowPos && !allowNeg) { allowPos = true; allowNeg = true; }
-
-    for (var i = 0; i < samples.length; i++) {
-        var s = samples[i];
-        var nx = s.normal[0], ny = s.normal[1];
-
-        // accent на самом пути
-        var isAccent = (s.cumLen - lastAccentLen) >= accentSpacing;
-        if (isAccent) {
-            lastAccentLen = s.cumLen;
-            accentPts.push({ pos: s.pos, opacity: 1, distRank: 0 });
-        }
-
-        // micro по нормали в обе стороны
-        for (var d = 1; d <= steps; d++) {
-            var offset = pad + d * spacing;
-            if (offset > pad + spread) break;
-            var t = (d * spacing) / spread;
-            var op = opts.noFade ? 1 : (1 - falloff(t, opts.falloffType));
-
-            // positive side
-            if (allowPos) {
-                if (Math.random() <= opts.density) {
-                    microPts.push({
-                        pos: [s.pos[0] + nx * offset, s.pos[1] + ny * offset],
-                        opacity: op, distRank: t
-                    });
-                }
-            }
-            // negative side
-            if (allowNeg) {
-                if (Math.random() <= opts.density) {
-                    microPts.push({
-                        pos: [s.pos[0] - nx * offset, s.pos[1] - ny * offset],
-                        opacity: op, distRank: t
-                    });
-                }
-            }
-        }
-    }
-
-    return { micro: microPts, accent: accentPts };
-}
-
-4. generatePattern — применение useObjColor для обоих режимов
-
-Найди вызов создания слоёв и замени блок выбора цветов:
-
-// в generatePattern(), после получения result = generateAroundPattern(...) или generateAlongPattern(...)
-var microColor = opts.useObjColorMicro && info && info.color ? info.color : opts.microColor;
-var accentColor = opts.useObjColorAccent && info && info.color ? info.color : opts.accentColor;
-
-if (result.micro.length > 0) {
-    createDotLayer(comp, "DotPattern_Micro", result.micro, opts.microSize, microColor);
-}
-if (result.accent.length > 0) {
-    createDotLayer(comp, "DotPattern_Accent", result.accent, opts.accentSize, accentColor);
-}
-
-(Для Along Path info теперь тоже передавай — извлекай info.color из самого слоя‑источника через getSourceInfo(targetLayer) до вызова generateAlongPattern.)
-5. UI — компактный MODE‑dropdown + два креста Coverage
-
-Заменить секцию построения MODE и COVERAGE в buildUI():
-
-// === MODE ROW (компактный) ===
-var modeRow = panel.add("group");
-modeRow.orientation = "row";
-modeRow.alignChildren = ["left", "center"];
-var modeLbl = modeRow.add("statictext", undefined, "MODE:");
-modeLbl.graphics.foregroundColor = modeLbl.graphics.newPen(modeLbl.graphics.PenType.SOLID_COLOR, [1, 0.6, 0.1, 1], 1);
-var modeDD = modeRow.add("dropdownlist", undefined, ["Auto-detect", "Around Shape", "Along Path"]);
-modeDD.selection = 0;
-
-addDivider(panel);
-addSectionLabel(panel, "COVERAGE");
-
-// === COVERAGE: two crosses side by side ===
-var covRow = panel.add("group");
-covRow.orientation = "row";
-covRow.alignChildren = ["fill", "top"];
-covRow.spacing = 20;
-
-function buildCross(parent, title) {
-    var box = parent.add("panel", undefined, title);
-    box.orientation = "column";
-    box.alignChildren = ["center", "center"];
-    box.margins = 8;
-
-    var topRow = box.add("group"); topRow.alignment = "center";
-    var cbT = topRow.add("checkbox", undefined, "▲");
-
-    var midRow = box.add("group"); midRow.alignment = "center"; midRow.spacing = 4;
-    var cbL = midRow.add("checkbox", undefined, "◀");
-    var cbC = midRow.add("checkbox", undefined, "◆");
-    var cbR = midRow.add("checkbox", undefined, "▶");
-
-    var botRow = box.add("group"); botRow.alignment = "center";
-    var cbB = botRow.add("checkbox", undefined, "▼");
-
-    return { panel: box, top: cbT, left: cbL, center: cbC, right: cbR, bottom: cbB };
-}
-
-var stripCross = buildCross(covRow, "Strip");
-var arcCross   = buildCross(covRow, "Arc");
-
-// Defaults: Strip Top + Center
-stripCross.top.value = true;
-stripCross.center.value = true;
-
-// Arc Angle slider (active when any Arc checkbox is on)
-var arcAngleRow = panel.add("group");
-arcAngleRow.orientation = "row";
-arcAngleRow.add("statictext", undefined, "Arc Angle:");
-var arcAngleSlider = arcAngleRow.add("slider", undefined, 90, 60, 180);
-arcAngleSlider.preferredSize.width = 120;
-var arcAngleVal = arcAngleRow.add("statictext", undefined, "90°");
-arcAngleVal.preferredSize.width = 40;
-arcAngleSlider.onChanging = function() {
-    arcAngleVal.text = Math.round(arcAngleSlider.value) + "°";
-};
-
-// === Enable/disable logic based on MODE ===
-function updateCoverageState() {
-    var mode = modeDD.selection.index; // 0=Auto, 1=Around, 2=Along
-    var isAlong = (mode === 2);
-    // в Auto-detect определим на лету при Generate — UI оставляем активным
-    // но в явном Along Path серым становится всё кроме top/bottom/center
-
-    var stripCBs = [stripCross.top, stripCross.left, stripCross.center, stripCross.right, stripCross.bottom];
-    var arcCBs   = [arcCross.top,   arcCross.left,   arcCross.center,   arcCross.right,   arcCross.bottom];
-
-    if (isAlong) {
-        // Strip: только top/bottom/center активны
-        stripCross.top.enabled = true;
-        stripCross.bottom.enabled = true;
-        stripCross.center.enabled = true;
-        stripCross.left.enabled = false;
-        stripCross.right.enabled = false;
-        // Arc: то же самое
-        arcCross.top.enabled = true;
-        arcCross.bottom.enabled = true;
-        arcCross.center.enabled = true;
-        arcCross.left.enabled = false;
-        arcCross.right.enabled = false;
-    } else {
-        for (var i = 0; i < stripCBs.length; i++) stripCBs[i].enabled = true;
-        for (var j = 0; j < arcCBs.length;   j++) arcCBs[j].enabled = true;
-    }
-
-    // Arc angle slider: активен если хоть одна Arc галка стоит
-    var anyArc = arcCross.top.value || arcCross.bottom.value || arcCross.left.value || arcCross.right.value || arcCross.center.value;
-    arcAngleSlider.enabled = anyArc;
-    arcAngleVal.enabled = anyArc;
-}
-
-modeDD.onChange = updateCoverageState;
-arcCross.top.onClick    = updateCoverageState;
-arcCross.bottom.onClick = updateCoverageState;
-arcCross.left.onClick   = updateCoverageState;
-arcCross.right.onClick  = updateCoverageState;
-arcCross.center.onClick = updateCoverageState;
-updateCoverageState();
-
-6. readState() — собрать coverage из двух крестов
-
-В функции чтения UI добавь / замени:
-
-opts.coverage = {
-    strip: {
-        top:    stripCross.top.value,
-        bottom: stripCross.bottom.value,
-        left:   stripCross.left.value,
-        right:  stripCross.right.value,
-        center: stripCross.center.value
-    },
-    arc: {
-        top:    arcCross.top.value,
-        bottom: arcCross.bottom.value,
-        left:   arcCross.left.value,
-        right:  arcCross.right.value,
-        center: arcCross.center.value
-    }
-};
-opts.arcAngle = arcAngleSlider.value;
-opts.mode = ["auto", "around", "along"][modeDD.selection.index];
-
-
-// ptp_DotPattern.jsx v1.1.1
-// Around Shape + Along Path. Two independent Coverage systems: Strip + Arc.
-// Install: Adobe After Effects/Support Files/Scripts/ScriptUI Panels/
-// Open via: Window → ptp_DotPattern.jsx
-
-(function (thisObj) {
     var SCRIPT_NAME = "ptp_DotPattern";
-    var SCRIPT_VERSION = "v1.1.1";
+    var SCRIPT_VERSION = "v1.2";
+
+    var COL = {
+        bg:        [0.16, 0.16, 0.17, 1],
+        accentTxt: [1.00, 0.65, 0.10, 1],
+        divider:   [0.30, 0.30, 0.32, 1]
+    };
+
+    var DEFAULT_ACCENT = [1.00, 0.96, 0.40];
+    var DEFAULT_MICRO  = [0.79, 0.76, 0.40];
+
     var MAX_DOTS = 2000;
 
-    // Theme
-    var COL_BG       = [0.16, 0.16, 0.18, 1];
-    var COL_TEXT     = [0.88, 0.88, 0.88, 1];
-    var COL_ACCENT   = [1.00, 0.60, 0.10, 1];
-    var COL_DIVIDER  = [0.30, 0.30, 0.32, 1];
-
-    // Last opts (for Re-generate Last)
     var lastOpts = null;
-    var lastTargetLayerIndex = null;
+    var lastTargetIdx = null;
 
-    // ==================== HELPERS ====================
-
+    // ============================================================
+    // HELPERS
+    // ============================================================
     function getComp() {
         var c = app.project.activeItem;
-        if (!c || !(c instanceof CompItem)) {
-            alert("Откройте композицию.");
-            return null;
-        }
+        if (!c || !(c instanceof CompItem)) { alert("Откройте композицию."); return null; }
         return c;
     }
 
-    function getSelLayer(comp) {
-        if (!comp.selectedLayers || comp.selectedLayers.length === 0) return null;
-        return comp.selectedLayers[0];
+    function getSelLayer() {
+        var c = getComp(); if (!c) return null;
+        var s = c.selectedLayers;
+        if (s.length === 0) return null;
+        return s[0];
     }
 
     function rgbToHex(rgb) {
-        function h(x) { var s = Math.round(x * 255).toString(16); return s.length < 2 ? "0" + s : s; }
-        return "#" + h(rgb[0]) + h(rgb[1]) + h(rgb[2]);
+        function p(n){ var h=Math.round(n*255).toString(16); return h.length<2?"0"+h:h; }
+        return "#" + p(rgb[0]) + p(rgb[1]) + p(rgb[2]);
     }
 
-    function falloff(t, type) {
-        if (t < 0) t = 0; if (t > 1) t = 1;
-        if (type === "linear") return t;
-        if (type === "ease")   return t * t * (3 - 2 * t);
-        if (type === "step")   return t < 0.5 ? 0 : 1;
-        return t;
-    }
+    function clamp(v, lo, hi){ return v<lo?lo:(v>hi?hi:v); }
 
-    function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
-
-    // ==================== SOURCE INFO ====================
-
-    function getShapeColor(layer) {
-        try {
-            var contents = layer.property("Contents");
-            if (!contents) return null;
-            for (var i = 1; i <= contents.numProperties; i++) {
-                var grp = contents.property(i);
-                if (grp && grp.property("Contents")) {
-                    var inner = grp.property("Contents");
-                    for (var j = 1; j <= inner.numProperties; j++) {
-                        var p = inner.property(j);
-                        if (!p) continue;
-                        var n = p.matchName;
-                        if (n === "ADBE Vector Graphic - Fill") {
-                            try { return p.property("Color").value; } catch (e1) {}
-                        }
-                        if (n === "ADBE Vector Graphic - Stroke") {
-                            try { return p.property("Color").value; } catch (e2) {}
-                        }
-                    }
-                }
-            }
-        } catch (e) {}
-        return null;
-    }
-
+    // ============================================================
+    // SOURCE OBJECT ANALYSIS (без изменений из v1.0.1)
+    // ============================================================
     function getSourceInfo(layer) {
-        var comp = layer.containingComp;
-        var rect = layer.sourceRectAtTime(comp.time, false);
-        var pos;
-        try { pos = layer.property("Transform").property("Position").value; }
-        catch (e) { pos = [comp.width / 2, comp.height / 2]; }
+        var info = {kind:"rect", cx:0, cy:0, w:200, h:200, radius:0, color:DEFAULT_ACCENT.slice()};
 
-        var cx = pos[0] + (rect.left + rect.width / 2);
-        var cy = pos[1] + (rect.top + rect.height / 2);
-
-        // shape kind detection
-        var kind = "rect";
         try {
-            var c = layer.property("Contents");
-            if (c) {
-                for (var i = 1; i <= c.numProperties; i++) {
-                    var g = c.property(i);
-                    if (g && g.property("Contents")) {
-                        var inner = g.property("Contents");
-                        for (var j = 1; j <= inner.numProperties; j++) {
-                            var mn = inner.property(j).matchName;
-                            if (mn === "ADBE Vector Shape - Ellipse") kind = "ellipse";
-                            else if (mn === "ADBE Vector Shape - Star") kind = "polygon";
-                            else if (mn === "ADBE Vector Shape - Rect") kind = "rect";
+            var pos = layer.property("Transform").property("Position").value;
+            info.cx = pos[0];
+            info.cy = pos[1];
+        } catch(e) {}
+
+        if (layer instanceof ShapeLayer) {
+            try {
+                var contents = layer.property("ADBE Root Vectors Group");
+                for (var i=1; i<=contents.numProperties; i++) {
+                    var grp = contents.property(i);
+                    var inner = grp.property("ADBE Vectors Group");
+                    if (!inner) continue;
+                    for (var j=1; j<=inner.numProperties; j++) {
+                        var p = inner.property(j);
+                        if (p.matchName === "ADBE Vector Shape - Ellipse") {
+                            var sz = p.property("Size").value;
+                            info.kind = "circle";
+                            info.w = sz[0]; info.h = sz[1];
+                            info.radius = Math.max(sz[0], sz[1]) / 2;
+                        }
+                        if (p.matchName === "ADBE Vector Shape - Rect") {
+                            var sz2 = p.property("Size").value;
+                            info.kind = "rect";
+                            info.w = sz2[0]; info.h = sz2[1];
+                            try { info.radius = p.property("Roundness").value; } catch(e){}
+                        }
+                    }
+                    var hasFill = false;
+                    for (var k=1; k<=inner.numProperties; k++) {
+                        if (inner.property(k).matchName === "ADBE Vector Graphic - Fill") {
+                            try { info.color = inner.property(k).property("Color").value; } catch(e){}
+                            hasFill = true;
+                            break;
+                        }
+                    }
+                    if (!hasFill) {
+                        for (var k2=1; k2<=inner.numProperties; k2++) {
+                            if (inner.property(k2).matchName === "ADBE Vector Graphic - Stroke") {
+                                try { info.color = inner.property(k2).property("Color").value; } catch(e){}
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        } catch (e) {}
+            } catch(e) {}
+        } else {
+            try {
+                var rect = layer.sourceRectAtTime(layer.containingComp.time, false);
+                info.w = rect.width;
+                info.h = rect.height;
+                info.kind = "rect";
+            } catch(e) {}
+        }
 
-        return {
-            cx: cx, cy: cy,
-            w: rect.width, h: rect.height,
-            kind: kind,
-            color: getShapeColor(layer)
-        };
+        return info;
     }
 
-    // ==================== PATH SAMPLING ====================
+    // ============================================================
+    // FALLOFF (без изменений из v1.0.1)
+    // ============================================================
+    function falloff(t, type) {
+        var v = 1 - t;
+        if (v < 0) v = 0;
+        if (v > 1) v = 1;
+        if (type === "ease") return v*v*v;
+        if (type === "step") {
+            if (v > 0.66) return 1.0;
+            if (v > 0.33) return 0.5;
+            return 0.2;
+        }
+        return v;
+    }
 
+    // ============================================================
+    // RING POINT GENERATION (без изменений из v1.0.1)
+    // ============================================================
+    function generateRingPoints(info, distance, spacing) {
+        var points = [];
+
+        if (info.kind === "circle") {
+            var R = info.radius + distance;
+            if (R <= 0) return points;
+            var circ = 2 * Math.PI * R;
+            var count = Math.max(4, Math.floor(circ / spacing));
+            var step = (2 * Math.PI) / count;
+            for (var i=0; i<count; i++) {
+                var a = i * step;
+                points.push({
+                    x: info.cx + R * Math.cos(a),
+                    y: info.cy + R * Math.sin(a),
+                    ringIndex: 0
+                });
+            }
+        } else {
+            var hw = info.w/2 + distance;
+            var hh = info.h/2 + distance;
+            if (hw <= 0 || hh <= 0) return points;
+            var left   = info.cx - hw;
+            var right  = info.cx + hw;
+            var top    = info.cy - hh;
+            var bottom = info.cy + hh;
+
+            var topCount = Math.max(2, Math.floor((right - left) / spacing));
+            for (var t=0; t<=topCount; t++) {
+                points.push({ x: left + t*(right-left)/topCount, y: top, ringIndex: 0 });
+            }
+            var sideCount = Math.max(1, Math.floor((bottom - top) / spacing));
+            for (var s=1; s<sideCount; s++) {
+                points.push({ x: right, y: top + s*(bottom-top)/sideCount, ringIndex: 0 });
+            }
+            for (var b=topCount; b>=0; b--) {
+                points.push({ x: left + b*(right-left)/topCount, y: bottom, ringIndex: 0 });
+            }
+            for (var l=sideCount-1; l>=1; l--) {
+                points.push({ x: left, y: top + l*(bottom-top)/sideCount, ringIndex: 0 });
+            }
+        }
+
+        return points;
+    }
+
+    // ============================================================
+    // AROUND SHAPE — генерация (без изменений из v1.0.1)
+    // ============================================================
+    function generateAroundPattern(info, opts) {
+        var microPts = [];
+        var accentPts = [];
+
+        var ringCount = Math.max(1, Math.floor(opts.spread / opts.microSpacing));
+        var ringDistances = [];
+        for (var r=0; r<=ringCount; r++) {
+            ringDistances.push(opts.padding + r * opts.microSpacing);
+        }
+
+        var innerRing  = 0;
+        var outerRing  = ringDistances.length - 1;
+        var middleRing = Math.floor(ringDistances.length / 2);
+
+        var accentRingSet = {};
+        if (opts.accentInner)  accentRingSet[innerRing]  = true;
+        if (opts.accentMiddle) accentRingSet[middleRing] = true;
+        if (opts.accentOuter)  accentRingSet[outerRing]  = true;
+
+        for (var i=0; i<ringDistances.length; i++) {
+            var ringPts = generateRingPoints(info, ringDistances[i], opts.microSpacing);
+            var isAccentRing = accentRingSet[i] === true;
+
+            var t = ringDistances.length > 1 ? (i / (ringDistances.length-1)) : 0;
+            var op = opts.noFade ? 1.0 : falloff(t, opts.falloff);
+
+            for (var j=0; j<ringPts.length; j++) {
+                var pt = ringPts[j];
+
+                if (isAccentRing && (j % opts.accentEveryN === 0)) {
+                    accentPts.push({x: pt.x, y: pt.y, opacity: 1.0});
+                } else {
+                    if (Math.random() > opts.density) continue;
+                    microPts.push({x: pt.x, y: pt.y, opacity: op});
+                }
+            }
+        }
+
+        return { microPts: microPts, accentPts: accentPts };
+    }
+
+    // ============================================================
+    // ALONG PATH — поиск пути и сэмплирование (из v1.1)
+    // ============================================================
     function findPathInLayer(layer) {
-        // 1) Mask
         try {
             if (layer.mask && layer.mask.numProperties > 0) {
                 var m = layer.mask(1);
@@ -2296,20 +2006,18 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
                 }
             }
         } catch (e) {}
-        // 2) Shape path
         try {
-            var contents = layer.property("Contents");
+            var contents = layer.property("ADBE Root Vectors Group");
             if (contents) {
                 for (var i = 1; i <= contents.numProperties; i++) {
                     var grp = contents.property(i);
-                    if (grp && grp.property("Contents")) {
-                        var inner = grp.property("Contents");
-                        for (var j = 1; j <= inner.numProperties; j++) {
-                            var p = inner.property(j);
-                            if (p && p.matchName === "ADBE Vector Shape - Group") {
-                                var pathProp = p.property("Path");
-                                if (pathProp) return { prop: pathProp, type: "shape" };
-                            }
+                    var inner = grp.property("ADBE Vectors Group");
+                    if (!inner) continue;
+                    for (var j = 1; j <= inner.numProperties; j++) {
+                        var p = inner.property(j);
+                        if (p && p.matchName === "ADBE Vector Shape - Group") {
+                            var pathProp = p.property("Path");
+                            if (pathProp) return { prop: pathProp, type: "shape" };
                         }
                     }
                 }
@@ -2320,39 +2028,33 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
 
     function bezierPoint(p0, p1, p2, p3, t) {
         var u = 1 - t;
-        var b0 = u * u * u;
-        var b1 = 3 * u * u * t;
-        var b2 = 3 * u * t * t;
-        var b3 = t * t * t;
         return [
-            b0 * p0[0] + b1 * p1[0] + b2 * p2[0] + b3 * p3[0],
-            b0 * p0[1] + b1 * p1[1] + b2 * p2[1] + b3 * p3[1]
+            u*u*u*p0[0] + 3*u*u*t*p1[0] + 3*u*t*t*p2[0] + t*t*t*p3[0],
+            u*u*u*p0[1] + 3*u*u*t*p1[1] + 3*u*t*t*p2[1] + t*t*t*p3[1]
         ];
     }
 
     function bezierTangent(p0, p1, p2, p3, t) {
         var u = 1 - t;
-        var tx = 3 * u * u * (p1[0] - p0[0]) + 6 * u * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0]);
-        var ty = 3 * u * u * (p1[1] - p0[1]) + 6 * u * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1]);
-        var len = Math.sqrt(tx * tx + ty * ty);
-        if (len < 0.0001) return [1, 0];
-        return [tx / len, ty / len];
+        var tx = 3*u*u*(p1[0]-p0[0]) + 6*u*t*(p2[0]-p1[0]) + 3*t*t*(p3[0]-p2[0]);
+        var ty = 3*u*u*(p1[1]-p0[1]) + 6*u*t*(p2[1]-p1[1]) + 3*t*t*(p3[1]-p2[1]);
+        var L = Math.sqrt(tx*tx + ty*ty);
+        if (L < 0.0001) return [1, 0];
+        return [tx/L, ty/L];
     }
 
-    function samplePath(pathInfo, layer, comp) {
-        var pathProp = pathInfo.prop;
-        var path = pathProp.value;
+    function samplePath(pathInfo, layer) {
+        var path = pathInfo.prop.value;
         var verts = path.vertices;
         var inT = path.inTangents;
         var outT = path.outTangents;
         var closed = path.closed;
 
-        // layer transform
         var lpos;
         try { lpos = layer.property("Transform").property("Position").value; }
         catch (e) { lpos = [0, 0]; }
 
-        var SAMPLES_PER_SEG = 80;
+        var SAMPLES = 40; // экономно — 40 на сегмент
         var segments = closed ? verts.length : (verts.length - 1);
         if (segments < 1) return [];
 
@@ -2368,439 +2070,256 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
             var p1 = [p0[0] + outT[i0][0], p0[1] + outT[i0][1]];
             var p2 = [p3[0] + inT[i1][0],  p3[1] + inT[i1][1]];
 
-            for (var k = 0; k <= SAMPLES_PER_SEG; k++) {
-                if (s > 0 && k === 0) continue; // не дублируем стык
-                var t = k / SAMPLES_PER_SEG;
+            for (var k = 0; k <= SAMPLES; k++) {
+                if (s > 0 && k === 0) continue;
+                var t = k / SAMPLES;
                 var pt = bezierPoint(p0, p1, p2, p3, t);
                 var tan = bezierTangent(p0, p1, p2, p3, t);
-                var norm = [-tan[1], tan[0]];
+                var nrm = [-tan[1], tan[0]];
 
                 if (prevPt) {
-                    var dx = pt[0] - prevPt[0], dy = pt[1] - prevPt[1];
-                    cumLen += Math.sqrt(dx * dx + dy * dy);
+                    var dx = pt[0]-prevPt[0], dy = pt[1]-prevPt[1];
+                    cumLen += Math.sqrt(dx*dx + dy*dy);
                 }
                 prevPt = pt;
 
-                samples.push({ pos: pt, tangent: tan, normal: norm, cumLen: cumLen });
+                samples.push({ pos: pt, normal: nrm, cumLen: cumLen });
             }
         }
         return samples;
     }
 
-    // ==================== COVERAGE FILTERS ====================
-
-    function passesCoverageStrip(pt, info, cov, opts) {
-        if (!cov.strip) return false;
-        var s = cov.strip;
-        if (!s.top && !s.bottom && !s.left && !s.right && !s.center) return false;
-
-        var cx = info.cx, cy = info.cy;
-        var hW = info.w / 2, hH = info.h / 2;
-        var pad = opts.padding, spread = opts.spread;
-        var buf = opts.microSpacing * 2;
-        var x = pt[0], y = pt[1];
-
-        // Center buffer ring around object border
-        if (s.center) {
-            var inOuterFrame = (x >= cx - hW - pad - buf) && (x <= cx + hW + pad + buf) &&
-                               (y >= cy - hH - pad - buf) && (y <= cy + hH + pad + buf);
-            var inInnerHole  = (x > cx - hW - pad + buf) && (x < cx + hW + pad - buf) &&
-                               (y > cy - hH - pad + buf) && (y < cy + hH + pad - buf);
-            if (inOuterFrame && !inInnerHole) return true;
-        }
-
-        // Top strip
-        if (s.top) {
-            if (y < cy - hH - pad && y >= cy - hH - pad - spread &&
-                x >= cx - hW && x <= cx + hW) return true;
-        }
-        if (s.bottom) {
-            if (y > cy + hH + pad && y <= cy + hH + pad + spread &&
-                x >= cx - hW && x <= cx + hW) return true;
-        }
-        if (s.left) {
-            if (x < cx - hW - pad && x >= cx - hW - pad - spread &&
-                y >= cy - hH && y <= cy + hH) return true;
-        }
-        if (s.right) {
-            if (x > cx + hW + pad && x <= cx + hW + pad + spread &&
-                y >= cy - hH && y <= cy + hH) return true;
-        }
-        return false;
-    }
-
-    function passesCoverageArc(pt, info, cov, opts) {
-        if (!cov.arc) return false;
-        var a = cov.arc;
-        if (!a.top && !a.bottom && !a.left && !a.right && !a.center) return false;
-
-        var cx = info.cx, cy = info.cy;
-        var dx = pt[0] - cx, dy = pt[1] - cy;
-        var ang = Math.atan2(dy, dx) * 180 / Math.PI;
-        if (ang < 0) ang += 360;
-
-        var arcAngle = opts.arcAngle || 90;
-        var half = arcAngle / 2;
-        var centerBoost = a.center ? 15 : 0;
-
-        function inSector(centerDeg, hh) {
-            var d = Math.abs(ang - centerDeg);
-            if (d > 180) d = 360 - d;
-            return d <= (hh + centerBoost);
-        }
-
-        if (a.top    && inSector(270, half)) return true;
-        if (a.right  && inSector(0,   half)) return true;
-        if (a.bottom && inSector(90,  half)) return true;
-        if (a.left   && inSector(180, half)) return true;
-        // ◆ alone — small ring around object
-        if (a.center && !a.top && !a.bottom && !a.left && !a.right) {
-            var dist = Math.sqrt(dx * dx + dy * dy);
-            var rApprox = Math.max(info.w, info.h) / 2 + opts.padding;
-            if (dist >= rApprox && dist <= rApprox + opts.microSpacing * 3) return true;
-        }
-        return false;
-    }
-
-    function passesCoverageAround(pt, info, cov, opts) {
-        if (passesCoverageStrip(pt, info, cov, opts)) return true;
-        if (passesCoverageArc(pt, info, cov, opts)) return true;
-        return false;
-    }
-
-    // ==================== GENERATION: AROUND ====================
-
-    function generateAroundPattern(info, opts) {
-        var cx = info.cx, cy = info.cy;
-        var hW = info.w / 2, hH = info.h / 2;
-        var pad = opts.padding, spread = opts.spread;
-        var spacing = opts.microSpacing;
-
-        var x0 = cx - hW - pad - spread;
-        var x1 = cx + hW + pad + spread;
-        var y0 = cy - hH - pad - spread;
-        var y1 = cy + hH + pad + spread;
-
-        var allPoints = [];
-
-        for (var y = y0; y <= y1; y += spacing) {
-            for (var x = x0; x <= x1; x += spacing) {
-                // skip inside object + padding
-                if (x > cx - hW - pad && x < cx + hW + pad &&
-                    y > cy - hH - pad && y < cy + hH + pad) continue;
-
-                var pt = [x, y];
-                if (!passesCoverageAround(pt, info, opts.coverage, opts)) continue;
-                if (Math.random() > opts.density) continue;
-
-                var distX = Math.max(0, Math.abs(x - cx) - hW);
-                var distY = Math.max(0, Math.abs(y - cy) - hH);
-                var dist = Math.sqrt(distX * distX + distY * distY);
-                var distFromPad = Math.max(0, dist - pad);
-                var t = clamp(distFromPad / spread, 0, 1);
-                var op = opts.noFade ? 1 : (1 - falloff(t, opts.falloffType));
-
-                allPoints.push({ pos: pt, opacity: op, distRank: t });
-            }
-        }
-
-        // Split accent / micro
-        return splitAccent(allPoints, opts);
-    }
-
-    function splitAccent(allPoints, opts) {
-        var targets = [];
-        if (opts.accentInner)  targets.push(0.0);
-        if (opts.accentMiddle) targets.push(0.5);
-        if (opts.accentOuter)  targets.push(1.0);
-
-        var ringTol = 0.12;
-        var micro = [], accent = [];
-        var counter = 0;
-
-        for (var i = 0; i < allPoints.length; i++) {
-            var p = allPoints[i];
-            var isAccent = false;
-            if (targets.length > 0) {
-                for (var k = 0; k < targets.length; k++) {
-                    if (Math.abs(p.distRank - targets[k]) < ringTol) {
-                        counter++;
-                        if (counter % opts.accentEveryN === 0) isAccent = true;
-                        break;
-                    }
-                }
-            }
-            if (isAccent) { p.opacity = 1; accent.push(p); }
-            else micro.push(p);
-        }
-        return { micro: micro, accent: accent };
-    }
-
-    // ==================== GENERATION: ALONG ====================
-
+    // ============================================================
+    // ALONG PATH — генерация (с Coverage Top/Down)
+    // ============================================================
     function generateAlongPattern(samples, opts) {
-        var spread = opts.spread, spacing = opts.microSpacing, pad = opts.padding;
-        var steps = Math.ceil(spread / spacing);
-        if (steps < 1) steps = 1;
+        var microPts = [];
+        var accentPts = [];
 
-        var cov = opts.coverage;
-        var allowPos =
-            (cov.strip && (cov.strip.top || cov.strip.center)) ||
-            (cov.arc   && (cov.arc.top   || cov.arc.center));
-        var allowNeg =
-            (cov.strip && (cov.strip.bottom || cov.strip.center)) ||
-            (cov.arc   && (cov.arc.bottom   || cov.arc.center));
-        if (!allowPos && !allowNeg) { allowPos = true; allowNeg = true; }
+        var ringCount = Math.max(1, Math.floor(opts.spread / opts.microSpacing));
+        var ringDistances = [];
+        for (var r=0; r<=ringCount; r++) {
+            ringDistances.push(opts.padding + r * opts.microSpacing);
+        }
 
-        var accentSpacing = 60;
-        var lastAccentLen = -accentSpacing;
-        var allMicro = [];
-        var accent = [];
-        var accentCounter = 0;
+        var innerRing = 0;
+        var outerRing = ringDistances.length - 1;
+        var middleRing = Math.floor(ringDistances.length / 2);
 
-        for (var i = 0; i < samples.length; i++) {
+        var accentRingSet = {};
+        if (opts.accentInner)  accentRingSet[innerRing]  = true;
+        if (opts.accentMiddle) accentRingSet[middleRing] = true;
+        if (opts.accentOuter)  accentRingSet[outerRing]  = true;
+
+        var allowTop = opts.alongTop;       // положительная сторона нормали
+        var allowDown = opts.alongDown;     // отрицательная
+        if (!allowTop && !allowDown) { allowTop = true; allowDown = true; }
+
+        // прореживание точек вдоль пути по spacing
+        var sampleStep = Math.max(1, Math.round(opts.microSpacing / 4));
+
+        for (var i=0; i<samples.length; i += sampleStep) {
             var s = samples[i];
             var nx = s.normal[0], ny = s.normal[1];
 
-            // accent along path
-            if ((s.cumLen - lastAccentLen) >= accentSpacing) {
-                lastAccentLen = s.cumLen;
-                accentCounter++;
-                // simulate "Every N-th" by treating path-accents as ring with N filter
-                if (opts.accentEveryN <= 1 || (accentCounter % opts.accentEveryN === 0)) {
-                    if (opts.accentInner || opts.accentMiddle || opts.accentOuter) {
-                        accent.push({ pos: s.pos, opacity: 1, distRank: 0 });
+            for (var ri=0; ri<ringDistances.length; ri++) {
+                var d = ringDistances[ri];
+                var t = ringDistances.length > 1 ? (ri / (ringDistances.length-1)) : 0;
+                var op = opts.noFade ? 1.0 : falloff(t, opts.falloff);
+                var isAccentRing = accentRingSet[ri] === true;
+
+                // Top side (positive normal)
+                if (allowTop) {
+                    var ptT = { x: s.pos[0] + nx*d, y: s.pos[1] + ny*d };
+                    if (isAccentRing && (i % (opts.accentEveryN * sampleStep) === 0)) {
+                        accentPts.push({x: ptT.x, y: ptT.y, opacity: 1.0});
+                    } else {
+                        if (Math.random() <= opts.density) {
+                            microPts.push({x: ptT.x, y: ptT.y, opacity: op});
+                        }
+                    }
+                }
+                // Down side (negative normal)
+                if (allowDown) {
+                    var ptD = { x: s.pos[0] - nx*d, y: s.pos[1] - ny*d };
+                    if (isAccentRing && (i % (opts.accentEveryN * sampleStep) === 0)) {
+                        accentPts.push({x: ptD.x, y: ptD.y, opacity: 1.0});
+                    } else {
+                        if (Math.random() <= opts.density) {
+                            microPts.push({x: ptD.x, y: ptD.y, opacity: op});
+                        }
                     }
                 }
             }
-
-            for (var d = 1; d <= steps; d++) {
-                var offset = pad + d * spacing;
-                if (offset > pad + spread) break;
-                var t = clamp((d * spacing) / spread, 0, 1);
-                var op = opts.noFade ? 1 : (1 - falloff(t, opts.falloffType));
-
-                if (allowPos && Math.random() <= opts.density) {
-                    allMicro.push({
-                        pos: [s.pos[0] + nx * offset, s.pos[1] + ny * offset],
-                        opacity: op, distRank: t
-                    });
-                }
-                if (allowNeg && Math.random() <= opts.density) {
-                    allMicro.push({
-                        pos: [s.pos[0] - nx * offset, s.pos[1] - ny * offset],
-                        opacity: op, distRank: t
-                    });
-                }
-            }
         }
 
-        return { micro: allMicro, accent: accent };
+        return { microPts: microPts, accentPts: accentPts };
     }
 
-    // ==================== LAYER CREATION ====================
-
-    function createDotLayer(comp, name, dots, size, color) {
-        if (dots.length === 0) return null;
-
-        // Compute bbox center for anchor
-        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (var i = 0; i < dots.length; i++) {
-            var p = dots[i].pos;
-            if (p[0] < minX) minX = p[0];
-            if (p[1] < minY) minY = p[1];
-            if (p[0] > maxX) maxX = p[0];
-            if (p[1] > maxY) maxY = p[1];
-        }
-        var bbCx = (minX + maxX) / 2;
-        var bbCy = (minY + maxY) / 2;
-        var bbW = Math.max(10, maxX - minX);
-        var bbH = Math.max(10, maxY - minY);
-
-        var layer = comp.layers.addShape();
-        layer.name = name;
-
-        // Group by opacity rounded to 0.05 to reduce shape count
-        var buckets = {};
-        for (var j = 0; j < dots.length; j++) {
-            var d = dots[j];
-            var key = Math.round(d.opacity * 20) / 20;
-            if (!buckets[key]) buckets[key] = [];
-            buckets[key].push(d.pos);
-        }
-
-        var contents = layer.property("Contents");
-
-        for (var op in buckets) {
-            if (!buckets.hasOwnProperty(op)) continue;
-            var pts = buckets[op];
-            var group = contents.addProperty("ADBE Vector Group");
-            group.name = "Op_" + op;
-            var inner = group.property("Contents");
-
-            for (var m = 0; m < pts.length; m++) {
-                var x = pts[m][0] - bbCx;
-                var y = pts[m][1] - bbCy;
-                addCircle(inner, x, y, size);
-            }
-            var fill = inner.addProperty("ADBE Vector Graphic - Fill");
-            fill.property("Color").setValue(color);
-            fill.property("Opacity").setValue(parseFloat(op) * 100);
-        }
-
-        // Position layer at bbox center, anchor [0,0]
-        try {
-            layer.property("Transform").property("Position").setValue([bbCx, bbCy]);
-            layer.property("Transform").property("Anchor Point").setValue([0, 0]);
-        } catch (e) {}
-
-        return layer;
-    }
-
-    function addCircle(inner, x, y, size) {
-        var g = inner.addProperty("ADBE Vector Group");
-        g.name = "Dot";
-        var ginner = g.property("Contents");
-        var ell = ginner.addProperty("ADBE Vector Shape - Ellipse");
-        ell.property("Size").setValue([size, size]);
-        ell.property("Position").setValue([0, 0]);
-        try {
-            g.property("Transform").property("Position").setValue([x, y]);
-        } catch (e) {}
-    }
-
-    // ==================== MODE DETECTION ====================
-
+    // ============================================================
+    // MODE DETECTION
+    // ============================================================
     function detectMode(layer) {
-        // Returns "around" or "along"
         var path = findPathInLayer(layer);
         if (!path) return "around";
-        // если есть маска — однозначно along
         if (path.type === "mask") return "along";
-        // shape: проверяем число вершин — если 4 (rect) или ellipse — around, иначе along
         try {
             var v = path.prop.value.vertices;
+            // rect-like shape (4 vertices) и ellipse → around
             if (v.length <= 4) return "around";
         } catch (e) {}
         return "along";
     }
 
-    // ==================== MAIN GENERATE ====================
+    // ============================================================
+    // LAYER CREATION (с правильным anchor — из v1.0.1)
+    // ============================================================
+    function createDotLayer(comp, name, dots, size, color) {
+        if (dots.length === 0) return null;
 
-    function generatePattern(targetLayer, opts) {
-        var comp = targetLayer.containingComp;
+        var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (var i=0; i<dots.length; i++) {
+            if (dots[i].x < minX) minX = dots[i].x;
+            if (dots[i].x > maxX) maxX = dots[i].x;
+            if (dots[i].y < minY) minY = dots[i].y;
+            if (dots[i].y > maxY) maxY = dots[i].y;
+        }
+        var bbCx = (minX + maxX) / 2;
+        var bbCy = (minY + maxY) / 2;
+
+        var layer = comp.layers.addShape();
+        layer.name = name;
+
+        // группируем по opacity для экономии
+        var buckets = {};
+        for (var j=0; j<dots.length; j++) {
+            var d = dots[j];
+            var key = Math.round(d.opacity * 20) / 20;
+            if (!buckets[key]) buckets[key] = [];
+            buckets[key].push([d.x, d.y]);
+        }
+
+        var contents = layer.property("ADBE Root Vectors Group");
+
+        for (var op in buckets) {
+            if (!buckets.hasOwnProperty(op)) continue;
+            var pts = buckets[op];
+            var grp = contents.addProperty("ADBE Vector Group");
+            grp.name = "Op_" + op;
+            var inner = grp.property("ADBE Vectors Group");
+
+            for (var m=0; m<pts.length; m++) {
+                var dotGrp = inner.addProperty("ADBE Vector Group");
+                dotGrp.name = "Dot";
+                var dotInner = dotGrp.property("ADBE Vectors Group");
+                var ell = dotInner.addProperty("ADBE Vector Shape - Ellipse");
+                ell.property("Size").setValue([size, size]);
+                ell.property("Position").setValue([0, 0]);
+                try {
+                    dotGrp.property("Transform").property("Position")
+                        .setValue([pts[m][0] - bbCx, pts[m][1] - bbCy]);
+                } catch(e) {}
+            }
+
+            var fill = inner.addProperty("ADBE Vector Graphic - Fill");
+            fill.property("Color").setValue(color);
+            fill.property("Opacity").setValue(parseFloat(op) * 100);
+        }
+
+        try {
+            layer.property("Transform").property("Position").setValue([bbCx, bbCy]);
+            layer.property("Transform").property("Anchor Point").setValue([0, 0]);
+        } catch(e) {}
+
+        return layer;
+    }
+
+    // ============================================================
+    // MAIN GENERATE
+    // ============================================================
+    function generatePattern(layer, opts) {
+        var comp = layer.containingComp;
+
         var mode = opts.mode;
-        if (mode === "auto") mode = detectMode(targetLayer);
+        if (mode === "auto") mode = detectMode(layer);
 
-        var result = null;
-        var info = null;
+        var result, info;
 
         if (mode === "along") {
-            var pathInfo = findPathInLayer(targetLayer);
+            var pathInfo = findPathInLayer(layer);
             if (!pathInfo) {
-                alert("Выделите Mask Path или Shape Path для режима Along Path.\nИли выделите слой с одной маской — путь возьмётся автоматически.");
+                alert("Выделите слой с Mask Path или Shape Path.\nИли слой с одной маской — путь возьмётся автоматически.");
                 return;
             }
-            var samples = samplePath(pathInfo, targetLayer, comp);
-            if (!samples || samples.length === 0) {
-                alert("Не удалось получить точки на пути.");
-                return;
-            }
+            var samples = samplePath(pathInfo, layer);
+            if (!samples.length) { alert("Не удалось получить точки на пути."); return; }
             result = generateAlongPattern(samples, opts);
-            // info нужен для цвета объекта
-            info = { color: getShapeColor(targetLayer) };
+            info = getSourceInfo(layer); // для color
         } else {
-            info = getSourceInfo(targetLayer);
+            info = getSourceInfo(layer);
             result = generateAroundPattern(info, opts);
         }
 
-        var total = result.micro.length + result.accent.length;
-        if (total === 0) {
-            alert("Нет точек для генерации.\nПроверьте Coverage (включите хотя бы одно направление).");
-            return;
-        }
+        var total = result.microPts.length + result.accentPts.length;
+        if (total === 0) { alert("Нет точек для генерации."); return; }
         if (total > MAX_DOTS) {
-            var go = confirm("Будет создано " + total + " точек (лимит " + MAX_DOTS + ").\nПродолжить?");
-            if (!go) return;
+            if (!confirm("Будет создано " + total + " точек (лимит " + MAX_DOTS + ").\nПродолжить?")) return;
         }
 
         var microColor = (opts.useObjColorMicro && info && info.color) ? info.color : opts.microColor;
         var accentColor = (opts.useObjColorAccent && info && info.color) ? info.color : opts.accentColor;
 
         app.beginUndoGroup(SCRIPT_NAME + " — Generate");
-        var microLayer = null, accentLayer = null;
-        if (result.micro.length > 0)
-            microLayer = createDotLayer(comp, "DotPattern_Micro", result.micro, opts.microSize, microColor);
-        if (result.accent.length > 0)
-            accentLayer = createDotLayer(comp, "DotPattern_Accent", result.accent, opts.accentSize, accentColor);
+        var microLayer = createDotLayer(comp, "DotPattern_Micro", result.microPts, opts.microSize, microColor);
+        var accentLayer = createDotLayer(comp, "DotPattern_Accent", result.accentPts, opts.accentSize, accentColor);
 
-        // Pre-comp
         if (opts.preComp) {
             var idxs = [];
             if (accentLayer) idxs.push(accentLayer.index);
             if (microLayer) idxs.push(microLayer.index);
-            if (idxs.length > 0) {
-                try { comp.layers.precompose(idxs, "DotPattern_PreComp", true); } catch (e) {}
+            if (idxs.length) {
+                try { comp.layers.precompose(idxs, "DotPattern_PreComp", true); } catch(e) {}
             }
         } else if (opts.parentToSource) {
             try {
-                if (microLayer) microLayer.parent = targetLayer;
-                if (accentLayer) accentLayer.parent = targetLayer;
-            } catch (e) {}
+                if (microLayer) microLayer.parent = layer;
+                if (accentLayer) accentLayer.parent = layer;
+            } catch(e) {}
         }
-
         app.endUndoGroup();
 
         lastOpts = cloneOpts(opts);
-        lastTargetLayerIndex = targetLayer.index;
+        lastTargetIdx = layer.index;
     }
 
     function cloneOpts(o) {
         var n = {};
-        for (var k in o) {
-            if (o.hasOwnProperty(k)) {
-                if (k === "coverage") {
-                    n.coverage = {
-                        strip: {
-                            top: o.coverage.strip.top, bottom: o.coverage.strip.bottom,
-                            left: o.coverage.strip.left, right: o.coverage.strip.right,
-                            center: o.coverage.strip.center
-                        },
-                        arc: {
-                            top: o.coverage.arc.top, bottom: o.coverage.arc.bottom,
-                            left: o.coverage.arc.left, right: o.coverage.arc.right,
-                            center: o.coverage.arc.center
-                        }
-                    };
-                } else if (o[k] && o[k].length === 4) {
-                    n[k] = [o[k][0], o[k][1], o[k][2], o[k][3]];
-                } else {
-                    n[k] = o[k];
-                }
-            }
+        for (var k in o) if (o.hasOwnProperty(k)) {
+            if (o[k] && o[k].length === 4) n[k] = [o[k][0],o[k][1],o[k][2],o[k][3]];
+            else if (o[k] && o[k].length === 3) n[k] = [o[k][0],o[k][1],o[k][2]];
+            else n[k] = o[k];
         }
         return n;
     }
 
-    // ==================== UI HELPERS ====================
-
+    // ============================================================
+    // UI HELPERS
+    // ============================================================
     function addDivider(parent) {
         var g = parent.add("group");
         g.alignment = ["fill", "top"];
         g.minimumSize.height = 1;
         g.maximumSize.height = 1;
-        g.graphics.backgroundColor = g.graphics.newBrush(g.graphics.BrushType.SOLID_COLOR, COL_DIVIDER);
+        g.graphics.backgroundColor = g.graphics.newBrush(g.graphics.BrushType.SOLID_COLOR, COL.divider);
     }
-
     function addSectionLabel(parent, text) {
         var st = parent.add("statictext", undefined, text);
-        st.graphics.foregroundColor = st.graphics.newPen(st.graphics.PenType.SOLID_COLOR, COL_ACCENT, 1);
+        st.graphics.foregroundColor = st.graphics.newPen(st.graphics.PenType.SOLID_COLOR, COL.accentTxt, 1);
         return st;
     }
-
     function styleSwatch(btn, rgb) {
         try {
-            btn.fillBrush = btn.graphics.newBrush(btn.graphics.BrushType.SOLID_COLOR, rgb);
+            btn.fillBrush = btn.graphics.newBrush(btn.graphics.BrushType.SOLID_COLOR, [rgb[0],rgb[1],rgb[2],1]);
             btn.onDraw = function () {
                 btn.graphics.drawOSControl();
                 btn.graphics.rectPath(2, 2, btn.size.width - 4, btn.size.height - 4);
@@ -2808,179 +2327,104 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
             };
         } catch (e) {}
     }
-
     function pickColor(currentRgb) {
         var hex = rgbToHex(currentRgb);
         var dec = parseInt(hex.substring(1), 16);
         var res = $.colorPicker(dec);
         if (res === -1) return null;
-        var r = ((res >> 16) & 0xFF) / 255;
-        var g = ((res >> 8) & 0xFF) / 255;
-        var b = (res & 0xFF) / 255;
-        return [r, g, b, 1];
+        return [((res>>16)&0xFF)/255, ((res>>8)&0xFF)/255, (res&0xFF)/255];
     }
 
-    // ==================== UI ====================
-
-    function buildUI(parent) {
-        var w = (parent instanceof Panel) ? parent
-              : new Window("palette", SCRIPT_NAME + " " + SCRIPT_VERSION, undefined, { resizeable: true });
+    // ============================================================
+    // UI
+    // ============================================================
+    function buildUI(thisObj) {
+        var w = (thisObj instanceof Panel) ? thisObj
+              : new Window("palette", SCRIPT_NAME + " " + SCRIPT_VERSION, undefined, {resizeable:true});
         w.orientation = "column";
         w.alignChildren = ["fill", "top"];
         w.spacing = 6;
         w.margins = 10;
 
-        try { w.graphics.backgroundColor = w.graphics.newBrush(w.graphics.BrushType.SOLID_COLOR, COL_BG); } catch (e) {}
+        try { w.graphics.backgroundColor = w.graphics.newBrush(w.graphics.BrushType.SOLID_COLOR, COL.bg); } catch(e) {}
 
-        // Title
         var title = w.add("statictext", undefined, SCRIPT_NAME + "  " + SCRIPT_VERSION);
-        title.graphics.foregroundColor = title.graphics.newPen(title.graphics.PenType.SOLID_COLOR, COL_ACCENT, 1);
+        title.preferredSize.width = 240;
+        title.graphics.foregroundColor = title.graphics.newPen(title.graphics.PenType.SOLID_COLOR, COL.accentTxt, 1);
 
-        // MODE row
+        // MODE
         var modeRow = w.add("group");
         modeRow.orientation = "row";
         modeRow.alignChildren = ["left", "center"];
         var modeLbl = modeRow.add("statictext", undefined, "MODE:");
-        modeLbl.graphics.foregroundColor = modeLbl.graphics.newPen(modeLbl.graphics.PenType.SOLID_COLOR, COL_ACCENT, 1);
+        modeLbl.graphics.foregroundColor = modeLbl.graphics.newPen(modeLbl.graphics.PenType.SOLID_COLOR, COL.accentTxt, 1);
         var modeDD = modeRow.add("dropdownlist", undefined, ["Auto-detect", "Around Shape", "Along Path"]);
         modeDD.selection = 0;
 
         addDivider(w);
 
-        // COVERAGE
-        addSectionLabel(w, "COVERAGE");
-
+        // COVERAGE (только для Along Path)
+        addSectionLabel(w, "COVERAGE (Along Path only)");
         var covRow = w.add("group");
         covRow.orientation = "row";
-        covRow.alignChildren = ["fill", "top"];
-        covRow.spacing = 12;
-
-        function buildCross(parent, title) {
-            var box = parent.add("panel", undefined, title);
-            box.orientation = "column";
-            box.alignChildren = ["center", "center"];
-            box.margins = 6;
-            box.spacing = 2;
-
-            var topRow = box.add("group"); topRow.alignment = "center";
-            var cbT = topRow.add("checkbox", undefined, "▲");
-
-            var midRow = box.add("group"); midRow.alignment = "center"; midRow.spacing = 4;
-            var cbL = midRow.add("checkbox", undefined, "◀");
-            var cbC = midRow.add("checkbox", undefined, "◆");
-            var cbR = midRow.add("checkbox", undefined, "▶");
-
-            var botRow = box.add("group"); botRow.alignment = "center";
-            var cbB = botRow.add("checkbox", undefined, "▼");
-
-            return { top: cbT, left: cbL, center: cbC, right: cbR, bottom: cbB };
-        }
-
-        var stripCross = buildCross(covRow, "Strip");
-        var arcCross   = buildCross(covRow, "Arc");
-
-        // defaults
-        stripCross.top.value = true;
-        stripCross.center.value = true;
-
-        // Arc Angle slider
-        var arcAngleRow = w.add("group");
-        arcAngleRow.orientation = "row";
-        arcAngleRow.add("statictext", undefined, "Arc Angle:");
-        var arcAngleSlider = arcAngleRow.add("slider", undefined, 90, 60, 180);
-        arcAngleSlider.preferredSize.width = 120;
-        var arcAngleVal = arcAngleRow.add("statictext", undefined, "90°");
-        arcAngleVal.preferredSize.width = 40;
-        arcAngleSlider.onChanging = function () {
-            arcAngleVal.text = Math.round(arcAngleSlider.value) + "°";
-        };
+        covRow.alignChildren = ["left","center"];
+        covRow.spacing = 16;
+        var cbTop = covRow.add("checkbox", undefined, "▲ Top side");
+        var cbDown = covRow.add("checkbox", undefined, "▼ Down side");
+        cbTop.value = true;
+        cbDown.value = true;
 
         function updateCoverageState() {
             var idx = modeDD.selection ? modeDD.selection.index : 0;
             var isAlong = (idx === 2);
-            var stripL = [stripCross.left, stripCross.right];
-            var arcL   = [arcCross.left,   arcCross.right];
-            if (isAlong) {
-                stripL[0].enabled = false; stripL[1].enabled = false;
-                arcL[0].enabled = false;   arcL[1].enabled = false;
-            } else {
-                stripL[0].enabled = true; stripL[1].enabled = true;
-                arcL[0].enabled = true;   arcL[1].enabled = true;
-            }
-            var anyArc = arcCross.top.value || arcCross.bottom.value ||
-                         arcCross.left.value || arcCross.right.value || arcCross.center.value;
-            arcAngleSlider.enabled = anyArc;
-            arcAngleVal.enabled = anyArc;
+            // в Auto-detect оставляем активными (на случай если выделен путь)
+            var enabled = (idx !== 1); // 1 = Around Shape явно
+            cbTop.enabled = enabled;
+            cbDown.enabled = enabled;
         }
         modeDD.onChange = updateCoverageState;
-        arcCross.top.onClick = updateCoverageState;
-        arcCross.bottom.onClick = updateCoverageState;
-        arcCross.left.onClick = updateCoverageState;
-        arcCross.right.onClick = updateCoverageState;
-        arcCross.center.onClick = updateCoverageState;
         updateCoverageState();
 
         addDivider(w);
 
         // MICRO GRID
         addSectionLabel(w, "MICRO GRID");
+        var microState = { color: DEFAULT_MICRO.slice() };
 
-        var microState = { color: [0.788, 0.761, 0.4, 1] };
+        function mkSlider(parent, label, init, lo, hi, suffix, isFloat) {
+            var g = parent.add("group");
+            var l = g.add("statictext", undefined, label);
+            l.preferredSize.width = 70;
+            var s = g.add("slider", undefined, init, lo, hi);
+            s.preferredSize.width = 110;
+            var v = g.add("statictext", undefined, (isFloat ? init.toFixed(2) : Math.round(init)) + (suffix||""));
+            v.preferredSize.width = 50;
+            s.onChanging = function(){
+                v.text = (isFloat ? s.value.toFixed(2) : Math.round(s.value)) + (suffix||"");
+            };
+            return s;
+        }
 
-        var microSizeG = w.add("group");
-        microSizeG.add("statictext", undefined, "Size:");
-        var microSizeSl = microSizeG.add("slider", undefined, 2, 1, 10);
-        microSizeSl.preferredSize.width = 100;
-        var microSizeVal = microSizeG.add("statictext", undefined, "2 px");
-        microSizeVal.preferredSize.width = 40;
-        microSizeSl.onChanging = function () { microSizeVal.text = Math.round(microSizeSl.value) + " px"; };
-
+        var microSizeSl = mkSlider(w, "Size:", 2, 1, 10, " px");
         var microColorG = w.add("group");
-        microColorG.add("statictext", undefined, "Color:");
+        var mcL = microColorG.add("statictext", undefined, "Color:"); mcL.preferredSize.width = 70;
         var microColorBtn = microColorG.add("button", undefined, " ");
         microColorBtn.preferredSize = [40, 20];
         styleSwatch(microColorBtn, microState.color);
-        microColorBtn.onClick = function () {
+        microColorBtn.onClick = function(){
             var c = pickColor(microState.color);
             if (c) { microState.color = c; styleSwatch(microColorBtn, c); }
         };
         var microUseObjCB = microColorG.add("checkbox", undefined, "Use object color");
 
-        var microSpacingG = w.add("group");
-        microSpacingG.add("statictext", undefined, "Spacing:");
-        var microSpacingSl = microSpacingG.add("slider", undefined, 8, 3, 30);
-        microSpacingSl.preferredSize.width = 100;
-        var microSpacingVal = microSpacingG.add("statictext", undefined, "8 px");
-        microSpacingVal.preferredSize.width = 40;
-        microSpacingSl.onChanging = function () { microSpacingVal.text = Math.round(microSpacingSl.value) + " px"; };
-
-        var padG = w.add("group");
-        padG.add("statictext", undefined, "Padding:");
-        var padSl = padG.add("slider", undefined, 20, 0, 200);
-        padSl.preferredSize.width = 100;
-        var padVal = padG.add("statictext", undefined, "20 px");
-        padVal.preferredSize.width = 40;
-        padSl.onChanging = function () { padVal.text = Math.round(padSl.value) + " px"; };
-
-        var spreadG = w.add("group");
-        spreadG.add("statictext", undefined, "Spread:");
-        var spreadSl = spreadG.add("slider", undefined, 120, 20, 400);
-        spreadSl.preferredSize.width = 100;
-        var spreadVal = spreadG.add("statictext", undefined, "120 px");
-        spreadVal.preferredSize.width = 40;
-        spreadSl.onChanging = function () { spreadVal.text = Math.round(spreadSl.value) + " px"; };
-
-        var densG = w.add("group");
-        densG.add("statictext", undefined, "Density:");
-        var densSl = densG.add("slider", undefined, 0.7, 0.3, 1);
-        densSl.preferredSize.width = 100;
-        var densVal = densG.add("statictext", undefined, "0.70");
-        densVal.preferredSize.width = 40;
-        densSl.onChanging = function () { densVal.text = densSl.value.toFixed(2); };
+        var microSpacingSl = mkSlider(w, "Spacing:", 8, 3, 30, " px");
+        var padSl = mkSlider(w, "Padding:", 20, 0, 200, " px");
+        var spreadSl = mkSlider(w, "Spread:", 120, 20, 400, " px");
+        var densSl = mkSlider(w, "Density:", 0.7, 0.3, 1, "", true);
 
         var falloffG = w.add("group");
-        falloffG.add("statictext", undefined, "Falloff:");
-        var falloffDD = falloffG.add("dropdownlist", undefined, ["linear", "ease", "step"]);
+        var fL = falloffG.add("statictext", undefined, "Falloff:"); fL.preferredSize.width = 70;
+        var falloffDD = falloffG.add("dropdownlist", undefined, ["linear","ease","step"]);
         falloffDD.selection = 0;
         var noFadeCB = falloffG.add("checkbox", undefined, "No fade");
 
@@ -2988,38 +2432,24 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
 
         // ACCENT DOTS
         addSectionLabel(w, "ACCENT DOTS");
+        var accentState = { color: DEFAULT_ACCENT.slice() };
 
-        var accentState = { color: [1, 0.961, 0.4, 1] };
-
-        var accSizeG = w.add("group");
-        accSizeG.add("statictext", undefined, "Size:");
-        var accSizeSl = accSizeG.add("slider", undefined, 6, 2, 20);
-        accSizeSl.preferredSize.width = 100;
-        var accSizeVal = accSizeG.add("statictext", undefined, "6 px");
-        accSizeVal.preferredSize.width = 40;
-        accSizeSl.onChanging = function () { accSizeVal.text = Math.round(accSizeSl.value) + " px"; };
-
+        var accSizeSl = mkSlider(w, "Size:", 6, 2, 20, " px");
         var accColorG = w.add("group");
-        accColorG.add("statictext", undefined, "Color:");
+        var acL = accColorG.add("statictext", undefined, "Color:"); acL.preferredSize.width = 70;
         var accColorBtn = accColorG.add("button", undefined, " ");
         accColorBtn.preferredSize = [40, 20];
         styleSwatch(accColorBtn, accentState.color);
-        accColorBtn.onClick = function () {
+        accColorBtn.onClick = function(){
             var c = pickColor(accentState.color);
             if (c) { accentState.color = c; styleSwatch(accColorBtn, c); }
         };
         var accUseObjCB = accColorG.add("checkbox", undefined, "Use object color");
 
-        var accNthG = w.add("group");
-        accNthG.add("statictext", undefined, "Every N-th:");
-        var accNthSl = accNthG.add("slider", undefined, 6, 2, 20);
-        accNthSl.preferredSize.width = 100;
-        var accNthVal = accNthG.add("statictext", undefined, "6");
-        accNthVal.preferredSize.width = 40;
-        accNthSl.onChanging = function () { accNthVal.text = String(Math.round(accNthSl.value)); };
+        var accNthSl = mkSlider(w, "Every N-th:", 6, 2, 20, "");
 
         var ringG = w.add("group");
-        ringG.add("statictext", undefined, "Rings:");
+        var rL = ringG.add("statictext", undefined, "Rings:"); rL.preferredSize.width = 70;
         var accInnerCB  = ringG.add("checkbox", undefined, "Inner");
         var accMiddleCB = ringG.add("checkbox", undefined, "Middle");
         var accOuterCB  = ringG.add("checkbox", undefined, "Outer");
@@ -3035,9 +2465,8 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
 
         addDivider(w);
 
-        // BUTTONS
         var btnRow = w.add("group");
-        btnRow.alignment = ["fill", "top"];
+        btnRow.alignment = ["fill","top"];
         var genBtn = btnRow.add("button", undefined, "Create Pattern");
         var regenBtn = btnRow.add("button", undefined, "Re-generate Last");
         var helpBtn = btnRow.add("button", undefined, "?");
@@ -3045,22 +2474,9 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
 
         function readState() {
             return {
-                mode: ["auto", "around", "along"][modeDD.selection.index],
-                coverage: {
-                    strip: {
-                        top: stripCross.top.value, bottom: stripCross.bottom.value,
-                        left: stripCross.left.value && stripCross.left.enabled,
-                        right: stripCross.right.value && stripCross.right.enabled,
-                        center: stripCross.center.value
-                    },
-                    arc: {
-                        top: arcCross.top.value, bottom: arcCross.bottom.value,
-                        left: arcCross.left.value && arcCross.left.enabled,
-                        right: arcCross.right.value && arcCross.right.enabled,
-                        center: arcCross.center.value
-                    }
-                },
-                arcAngle: arcAngleSlider.value,
+                mode: ["auto","around","along"][modeDD.selection.index],
+                alongTop: cbTop.value,
+                alongDown: cbDown.value,
                 microSize: Math.round(microSizeSl.value),
                 microColor: microState.color,
                 useObjColorMicro: microUseObjCB.value,
@@ -3068,7 +2484,7 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
                 padding: Math.round(padSl.value),
                 spread: Math.round(spreadSl.value),
                 density: densSl.value,
-                falloffType: falloffDD.selection.text,
+                falloff: falloffDD.selection.text,
                 noFade: noFadeCB.value,
                 accentSize: Math.round(accSizeSl.value),
                 accentColor: accentState.color,
@@ -3082,110 +2498,42 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
             };
         }
 
-        genBtn.onClick = function () {
+        genBtn.onClick = function(){
             var comp = getComp(); if (!comp) return;
-            var layer = getSelLayer(comp);
-            if (!layer) { alert("Выделите слой-источник."); return; }
-            var opts = readState();
-            generatePattern(layer, opts);
+            var l = getSelLayer(); if (!l) { alert("Выделите слой-источник."); return; }
+            generatePattern(l, readState());
         };
-
-        regenBtn.onClick = function () {
+        regenBtn.onClick = function(){
             var comp = getComp(); if (!comp) return;
             if (!lastOpts) { alert("Сначала создайте паттерн кнопкой Create Pattern."); return; }
-            var layer = getSelLayer(comp);
-            if (!layer) {
-                if (lastTargetLayerIndex && comp.layer(lastTargetLayerIndex)) {
-                    layer = comp.layer(lastTargetLayerIndex);
-                } else {
-                    alert("Выделите слой-источник."); return;
-                }
-            }
-            generatePattern(layer, lastOpts);
+            var l = getSelLayer();
+            if (!l && lastTargetIdx && comp.layer(lastTargetIdx)) l = comp.layer(lastTargetIdx);
+            if (!l) { alert("Выделите слой-источник."); return; }
+            generatePattern(l, lastOpts);
         };
-
-        helpBtn.onClick = function () { alert(getHelpText()); };
+        helpBtn.onClick = function(){ alert(getHelpText()); };
 
         if (w instanceof Window) { w.center(); w.show(); }
         else { w.layout.layout(true); w.layout.resize(); }
-
         return w;
     }
 
     function getHelpText() {
         return SCRIPT_NAME + " " + SCRIPT_VERSION + "\n\n" +
-            "MODE\n" +
-            "  Auto-detect — определяет режим по выделенному слою.\n" +
-            "  Around Shape — паттерн вокруг фигуры (rect/ellipse).\n" +
-            "  Along Path — паттерн вдоль маски или Shape Path.\n\n" +
-            "COVERAGE — два независимых креста:\n" +
-            "  Strip — прямоугольные полосы строго над/под/слева/справа от объекта.\n" +
-            "  Arc — угловые сектора (дуги). Ширина сектора — Arc Angle (60-180°).\n" +
-            "  ◆ Center — в Strip заполняет узкое кольцо вплотную к границе;\n" +
-            "             в Arc расширяет сектор на ±15°.\n" +
-            "  Точка проходит если её принимает Strip ИЛИ Arc.\n\n" +
-            "В Along Path активны только Top/Bottom/Center (стороны нормали к пути).\n" +
-            "Left/Right серые и игнорируются.\n\n" +
-            "ACCENT RINGS\n" +
-            "  Inner — кольцо у границы объекта.\n" +
-            "  Middle — кольцо в середине spread.\n" +
-            "  Outer — кольцо на внешнем краю.\n" +
-            "  Every N-th — какая часть точек кольца становится акцентом.\n\n" +
-            "LIMITS: максимум " + MAX_DOTS + " точек (с подтверждением).\n";
+            "MODE:\n" +
+            "  Auto-detect — определяется автоматически по выделенному слою.\n" +
+            "  Around Shape — кольца точек вокруг фигуры (rect/ellipse).\n" +
+            "  Along Path — точки вдоль маски или Shape Path.\n\n" +
+            "COVERAGE (только Along Path):\n" +
+            "  ▲ Top side — точки с положительной стороны нормали.\n" +
+            "  ▼ Down side — точки с отрицательной стороны нормали.\n" +
+            "  В Around Shape серые и не работают.\n\n" +
+            "ACCENT RINGS: Inner (у границы) / Middle / Outer.\n" +
+            "Every N-th: какая часть точек кольца становится акцентом.\n\n" +
+            "Лимит: " + MAX_DOTS + " точек с подтверждением.";
     }
 
     buildUI(thisObj);
+
 })(this);
 
-
-Патч UI — точечные правки
-
-Открой ptp_DotPattern.jsx, найди функцию buildCross внутри buildUI() и замени её целиком на эту версию:
-
-function buildCross(parent, title) {
-    var box = parent.add("panel", undefined, title);
-    box.orientation = "column";
-    box.alignChildren = ["center", "center"];
-    box.margins = 8;
-    box.spacing = 4;
-    box.preferredSize.width = 110;
-
-    var CB_W = 28; // фиксированная ширина чекбокса
-
-    var topRow = box.add("group"); topRow.alignment = "center"; topRow.spacing = 4;
-    var cbT = topRow.add("checkbox", undefined, "▲");
-    cbT.preferredSize = [CB_W, 22];
-
-    var midRow = box.add("group"); midRow.alignment = "center"; midRow.spacing = 4;
-    var cbL = midRow.add("checkbox", undefined, "◀");
-    cbL.preferredSize = [CB_W, 22];
-    var cbC = midRow.add("checkbox", undefined, "◆");
-    cbC.preferredSize = [CB_W, 22];
-    var cbR = midRow.add("checkbox", undefined, "▶");
-    cbR.preferredSize = [CB_W, 22];
-
-    var botRow = box.add("group"); botRow.alignment = "center"; botRow.spacing = 4;
-    var cbB = botRow.add("checkbox", undefined, "▼");
-    cbB.preferredSize = [CB_W, 22];
-
-    return { top: cbT, left: cbL, center: cbC, right: cbR, bottom: cbB };
-}
-
-И сразу после строки
-
-var title = w.add("statictext", undefined, SCRIPT_NAME + "  " + SCRIPT_VERSION);
-
-добавь:
-
-title.preferredSize.width = 200;
-
-Чтобы заголовок целиком влезал.
-
-Также найди строку с covRow:
-
-covRow.spacing = 12;
-
-и замени на:
-
-covRow.spacing = 8;
-covRow.alignment = "center";
