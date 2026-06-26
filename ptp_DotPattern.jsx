@@ -1,5 +1,719 @@
 // ============================================================
 // ptp_DotPattern.jsx
+// v1.0.1 — Unified grid + accent rings + anchor fix
+// Author: ptp toolkit
+// Install: Save into "Support Files/Scripts/ScriptUI Panels/"
+// Run via: Window -> ptp_DotPattern.jsx
+// ============================================================
+
+(function ptp_DotPattern(thisObj) {
+
+    var SCRIPT_NAME = "ptp_DotPattern";
+    var SCRIPT_VERSION = "v1.0.1";
+
+    var COL = {
+        bg:        [0.16, 0.16, 0.17, 1],
+        accentTxt: [1.00, 0.65, 0.10, 1]
+    };
+
+    var DEFAULT_ACCENT = [1.00, 0.96, 0.40];
+    var DEFAULT_MICRO  = [0.79, 0.76, 0.40];
+
+    var MAX_DOTS = 2000;
+
+    // ============================================================
+    // HELPERS
+    // ============================================================
+    function getComp() {
+        var c = app.project.activeItem;
+        if (!c || !(c instanceof CompItem)) { alert("Откройте композицию."); return null; }
+        return c;
+    }
+
+    function getSelLayer() {
+        var c = getComp(); if (!c) return null;
+        var s = c.selectedLayers;
+        if (s.length === 0) return null;
+        return s[0];
+    }
+
+    function rgbToHex(rgb) {
+        function p(n){ var h=Math.round(n*255).toString(16); return h.length<2?"0"+h:h; }
+        return "#" + p(rgb[0]) + p(rgb[1]) + p(rgb[2]);
+    }
+
+    // ============================================================
+    // SOURCE OBJECT ANALYSIS
+    // ============================================================
+    function getSourceInfo(layer) {
+        var info = {kind:"rect", cx:0, cy:0, w:200, h:200, radius:0, color:DEFAULT_ACCENT.slice()};
+
+        try {
+            var pos = layer.property("Transform").property("Position").value;
+            info.cx = pos[0];
+            info.cy = pos[1];
+        } catch(e) {}
+
+        if (layer instanceof ShapeLayer) {
+            try {
+                var contents = layer.property("ADBE Root Vectors Group");
+                for (var i=1; i<=contents.numProperties; i++) {
+                    var grp = contents.property(i);
+                    var inner = grp.property("ADBE Vectors Group");
+                    if (!inner) continue;
+                    for (var j=1; j<=inner.numProperties; j++) {
+                        var p = inner.property(j);
+                        if (p.matchName === "ADBE Vector Shape - Ellipse") {
+                            var sz = p.property("Size").value;
+                            info.kind = "circle";
+                            info.w = sz[0]; info.h = sz[1];
+                            info.radius = Math.max(sz[0], sz[1]) / 2;
+                        }
+                        if (p.matchName === "ADBE Vector Shape - Rect") {
+                            var sz2 = p.property("Size").value;
+                            info.kind = "rect";
+                            info.w = sz2[0]; info.h = sz2[1];
+                            try { info.radius = p.property("Roundness").value; } catch(e){}
+                        }
+                    }
+                    // color
+                    var hasFill = false;
+                    for (var k=1; k<=inner.numProperties; k++) {
+                        if (inner.property(k).matchName === "ADBE Vector Graphic - Fill") {
+                            try { info.color = inner.property(k).property("Color").value; } catch(e){}
+                            hasFill = true;
+                            break;
+                        }
+                    }
+                    if (!hasFill) {
+                        for (var k2=1; k2<=inner.numProperties; k2++) {
+                            if (inner.property(k2).matchName === "ADBE Vector Graphic - Stroke") {
+                                try { info.color = inner.property(k2).property("Color").value; } catch(e){}
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch(e) {}
+        } else {
+            try {
+                var rect = layer.sourceRectAtTime(layer.containingComp.time, false);
+                info.w = rect.width;
+                info.h = rect.height;
+                info.kind = "rect";
+            } catch(e) {}
+        }
+
+        return info;
+    }
+
+    // ============================================================
+    // FALLOFF
+    // ============================================================
+    function falloff(t, type) {
+        var v = 1 - t;
+        if (v < 0) v = 0;
+        if (v > 1) v = 1;
+        if (type === "ease") return v*v*v;
+        if (type === "step") {
+            if (v > 0.66) return 1.0;
+            if (v > 0.33) return 0.5;
+            return 0.2;
+        }
+        return v;
+    }
+
+    // ============================================================
+    // RING POINT GENERATION (один ряд точек на заданном расстоянии)
+    // ============================================================
+    function generateRingPoints(info, distance, spacing) {
+        // distance = расстояние от поверхности объекта (внешнее)
+        var points = [];
+
+        if (info.kind === "circle") {
+            var R = info.radius + distance;
+            if (R <= 0) return points;
+            var circ = 2 * Math.PI * R;
+            var count = Math.max(4, Math.floor(circ / spacing));
+            var step = (2 * Math.PI) / count;
+            for (var i=0; i<count; i++) {
+                var a = i * step;
+                points.push({
+                    x: info.cx + R * Math.cos(a),
+                    y: info.cy + R * Math.sin(a),
+                    ringIndex: 0  // заполним извне
+                });
+            }
+        } else {
+            var hw = info.w/2 + distance;
+            var hh = info.h/2 + distance;
+            if (hw <= 0 || hh <= 0) return points;
+            var left   = info.cx - hw;
+            var right  = info.cx + hw;
+            var top    = info.cy - hh;
+            var bottom = info.cy + hh;
+
+            // верх
+            var topCount = Math.max(2, Math.floor((right - left) / spacing));
+            for (var t=0; t<=topCount; t++) {
+                points.push({ x: left + t*(right-left)/topCount, y: top, ringIndex: 0 });
+            }
+            // право (без угловых)
+            var sideCount = Math.max(1, Math.floor((bottom - top) / spacing));
+            for (var s=1; s<sideCount; s++) {
+                points.push({ x: right, y: top + s*(bottom-top)/sideCount, ringIndex: 0 });
+            }
+            // низ
+            for (var b=topCount; b>=0; b--) {
+                points.push({ x: left + b*(right-left)/topCount, y: bottom, ringIndex: 0 });
+            }
+            // лево (без угловых)
+            for (var l=sideCount-1; l>=1; l--) {
+                points.push({ x: left, y: top + l*(bottom-top)/sideCount, ringIndex: 0 });
+            }
+        }
+
+        return points;
+    }
+
+    // ============================================================
+    // FULL GRID GENERATION (все кольца micro + accent позиции)
+    // ============================================================
+    function generateFullPattern(info, opts) {
+        // returns {microPts: [...], accentPts: [...]}
+        var microPts = [];
+        var accentPts = [];
+
+        // определяем кольца от padding до padding+spread с шагом microSpacing
+        var ringCount = Math.max(1, Math.floor(opts.spread / opts.microSpacing));
+        var ringDistances = []; // расстояние от поверхности объекта
+        for (var r=0; r<=ringCount; r++) {
+            ringDistances.push(opts.padding + r * opts.microSpacing);
+        }
+
+        // вычисляем какие кольца являются accent
+        var innerRing  = 0;
+        var outerRing  = ringDistances.length - 1;
+        var middleRing = Math.floor(ringDistances.length / 2);
+
+        var accentRingSet = {};
+        if (opts.accentInner)  accentRingSet[innerRing]  = true;
+        if (opts.accentMiddle) accentRingSet[middleRing] = true;
+        if (opts.accentOuter)  accentRingSet[outerRing]  = true;
+
+        // генерируем точки на каждом кольце
+        for (var i=0; i<ringDistances.length; i++) {
+            var ringPts = generateRingPoints(info, ringDistances[i], opts.microSpacing);
+            var isAccentRing = accentRingSet[i] === true;
+
+            // opacity для этого кольца
+            var t = ringDistances.length > 1 ? (i / (ringDistances.length-1)) : 0;
+            var op = opts.noFade ? 1.0 : falloff(t, opts.falloff);
+
+            for (var j=0; j<ringPts.length; j++) {
+                var pt = ringPts[j];
+
+                // accent в этом ряду: каждая N-я точка → accent (заменяет micro)
+                if (isAccentRing && (j % opts.accentEveryN === 0)) {
+                    accentPts.push({x: pt.x, y: pt.y, opacity: 1.0});
+                } else {
+                    // density проверка только для micro
+                    if (Math.random() > opts.density) continue;
+                    microPts.push({x: pt.x, y: pt.y, opacity: op});
+                }
+            }
+        }
+
+        return { microPts: microPts, accentPts: accentPts };
+    }
+
+    // ============================================================
+    // LAYER CREATION (с правильным anchor)
+    // ============================================================
+    function createDotLayer(comp, name, dots, size, color) {
+        if (dots.length === 0) return null;
+
+        // вычисляем центр bounding box
+        var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (var i=0; i<dots.length; i++) {
+            if (dots[i].x < minX) minX = dots[i].x;
+            if (dots[i].x > maxX) maxX = dots[i].x;
+            if (dots[i].y < minY) minY = dots[i].y;
+            if (dots[i].y > maxY) maxY = dots[i].y;
+        }
+        var cx = (minX + maxX) / 2;
+        var cy = (minY + maxY) / 2;
+
+        var layer = comp.layers.addShape();
+        layer.name = name;
+
+        layer.property("Transform").property("Position").setValue([cx, cy]);
+        layer.property("Transform").property("Anchor Point").setValue([0, 0]);
+
+        var contents = layer.property("ADBE Root Vectors Group");
+
+        // группируем по уровням opacity
+        var buckets = {};
+        for (var d=0; d<dots.length; d++) {
+            var key = Math.round((dots[d].opacity || 1) * 20) / 20; // 5% шаг
+            if (!buckets[key]) buckets[key] = [];
+            buckets[key].push(dots[d]);
+        }
+
+        for (var bkey in buckets) {
+            if (!buckets.hasOwnProperty(bkey)) continue;
+            var arr = buckets[bkey];
+            var g = contents.addProperty("ADBE Vector Group");
+            g.name = "Dots_op" + bkey;
+            var inn = g.property("ADBE Vectors Group");
+            for (var dd=0; dd<arr.length; dd++) {
+                addCircle(inn, arr[dd].x - cx, arr[dd].y - cy, size);
+            }
+            var fl = inn.addProperty("ADBE Vector Graphic - Fill");
+            fl.property("Color").setValue(color);
+            try {
+                g.property("Transform").property("Opacity").setValue(parseFloat(bkey) * 100);
+            } catch(e){}
+        }
+
+        return layer;
+    }
+
+    function addCircle(inner, x, y, size) {
+        var ell = inner.addProperty("ADBE Vector Shape - Ellipse");
+        ell.property("Size").setValue([size, size]);
+        try { ell.property("Position").setValue([x, y]); } catch(e){}
+    }
+
+    // ============================================================
+    // MAIN
+    // ============================================================
+    function generatePattern(target, opts) {
+        var comp = target.containingComp;
+        var info = getSourceInfo(target);
+
+        var accentColor = opts.useObjectColorAccent ? info.color : opts.accentColor;
+        var microColor  = opts.useObjectColorMicro  ? info.color : opts.microColor;
+
+        var result = generateFullPattern(info, opts);
+
+        var totalDots = result.microPts.length + result.accentPts.length;
+        if (totalDots > MAX_DOTS) {
+            alert("Слишком много точек (" + totalDots + " > " + MAX_DOTS + ").\n" +
+                  "Уменьши Spread / увеличь Spacing / снизь Density.");
+            return null;
+        }
+
+        var layers = [];
+
+        if (opts.generateMicro && result.microPts.length > 0) {
+            var microLayer = createDotLayer(comp, "DotPattern_Micro", result.microPts, opts.microSize, microColor);
+            if (microLayer) layers.push(microLayer);
+        }
+
+        if (result.accentPts.length > 0) {
+            var accentLayer = createDotLayer(comp, "DotPattern_Accent", result.accentPts, opts.accentSize, accentColor);
+            if (accentLayer) layers.push(accentLayer);
+        }
+
+        if (opts.precomp && layers.length > 0) {
+            var indices = [];
+            for (var k=0; k<layers.length; k++) indices.push(layers[k].index);
+            indices.sort(function(a,b){return b-a;});
+            try {
+                var preName = "DotPattern_" + Math.floor(Math.random()*1000);
+                comp.layers.precompose(indices, preName, true);
+            } catch(e){ alert("Pre-comp error: " + e.toString()); }
+        }
+
+        if (opts.parentToSource && layers.length > 0) {
+            try {
+                for (var l=0; l<layers.length; l++) layers[l].parent = target;
+            } catch(e){}
+        }
+
+        return layers;
+    }
+
+    // ============================================================
+    // STATE
+    // ============================================================
+    var lastOpts = null;
+    var lastTargetIndex = -1;
+
+    // ============================================================
+    // UI
+    // ============================================================
+    function buildUI(thisObj) {
+        var win = (thisObj instanceof Panel) ? thisObj :
+                  new Window("palette", SCRIPT_NAME + " " + SCRIPT_VERSION,
+                  undefined, {resizeable:true, closeButton:true});
+
+        win.bg = COL.bg;
+        win.margins = 10;
+        win.spacing = 5;
+        win.orientation = "column";
+        win.alignChildren = ["fill","top"];
+
+        var header = win.add("group");
+        header.orientation = "row";
+        header.alignChildren = ["fill","center"];
+        var titleTxt = header.add("statictext", undefined, SCRIPT_NAME + " " + SCRIPT_VERSION);
+        try { titleTxt.graphics.foregroundColor = titleTxt.graphics.newPen(titleTxt.graphics.PenType.SOLID_COLOR, COL.accentTxt, 1); } catch(e){}
+        var helpBtn = header.add("button", undefined, "?");
+        helpBtn.preferredSize = [26, 22];
+        helpBtn.alignment = ["right","center"];
+        addDivider(win);
+
+        var state = {
+            generateMicro: true,
+            microColor: DEFAULT_MICRO.slice(),
+            useObjectColorMicro: false,
+            microSize: 2,
+            microSpacing: 8,
+            padding: 40,
+            spread: 120,
+            density: 0.7,
+            falloff: "linear",
+            noFade: false,
+            accentColor: DEFAULT_ACCENT.slice(),
+            useObjectColorAccent: false,
+            accentSize: 6,
+            accentEveryN: 6,
+            accentInner: false,
+            accentMiddle: true,
+            accentOuter: false,
+            precomp: false,
+            parentToSource: false
+        };
+
+        // ===== MODE =====
+        addSectionLabel(win, "MODE");
+        win.add("statictext", undefined, "● Around Shape (Along Path — в v1.1)");
+        addDivider(win);
+
+        // ===== MICRO GRID =====
+        addSectionLabel(win, "MICRO GRID");
+        var microCheck = win.add("checkbox", undefined, "Generate micro grid");
+        microCheck.value = true;
+
+        var mR1 = win.add("group");
+        mR1.add("statictext", undefined, "Size:");
+        var mSizeSlider = mR1.add("slider", undefined, 2, 1, 8);
+        mSizeSlider.preferredSize = [110, 20];
+        var mSizeVal = mR1.add("statictext", undefined, "2 px");
+        mSizeVal.preferredSize = [50,20];
+
+        var mR2 = win.add("group");
+        mR2.add("statictext", undefined, "Color:");
+        var mSwatch = mR2.add("button", undefined, "");
+        mSwatch.preferredSize = [24, 22];
+        styleSwatch(mSwatch, state.microColor);
+        var useObjMicro = mR2.add("checkbox", undefined, "Use obj color");
+        useObjMicro.value = false;
+
+        var mR3 = win.add("group");
+        mR3.add("statictext", undefined, "Spacing:");
+        var mSpacingSlider = mR3.add("slider", undefined, 8, 4, 30);
+        mSpacingSlider.preferredSize = [110, 20];
+        var mSpacingVal = mR3.add("statictext", undefined, "8 px");
+        mSpacingVal.preferredSize = [50,20];
+
+        var mR4 = win.add("group");
+        mR4.add("statictext", undefined, "Padding:");
+        var paddingSlider = mR4.add("slider", undefined, 40, 0, 200);
+        paddingSlider.preferredSize = [110, 20];
+        var paddingVal = mR4.add("statictext", undefined, "40 px");
+        paddingVal.preferredSize = [50,20];
+
+        var mR5 = win.add("group");
+        mR5.add("statictext", undefined, "Spread:");
+        var spreadSlider = mR5.add("slider", undefined, 120, 20, 400);
+        spreadSlider.preferredSize = [110, 20];
+        var spreadVal = mR5.add("statictext", undefined, "120 px");
+        spreadVal.preferredSize = [50,20];
+
+        var mR6 = win.add("group");
+        mR6.add("statictext", undefined, "Density:");
+        var densitySlider = mR6.add("slider", undefined, 70, 20, 100);
+        densitySlider.preferredSize = [110, 20];
+        var densityVal = mR6.add("statictext", undefined, "70%");
+        densityVal.preferredSize = [50,20];
+
+        var mR7 = win.add("group");
+        mR7.add("statictext", undefined, "Falloff:");
+        var falloffDD = mR7.add("dropdownlist", undefined, ["linear","ease","step"]);
+        falloffDD.selection = 0;
+        var noFadeCheck = mR7.add("checkbox", undefined, "No fade");
+        noFadeCheck.value = false;
+
+        addDivider(win);
+
+        // ===== ACCENT DOTS =====
+        addSectionLabel(win, "ACCENT DOTS");
+
+        var aR1 = win.add("group");
+        aR1.add("statictext", undefined, "Size:");
+        var aSizeSlider = aR1.add("slider", undefined, 6, 2, 20);
+        aSizeSlider.preferredSize = [110, 20];
+        var aSizeVal = aR1.add("statictext", undefined, "6 px");
+        aSizeVal.preferredSize = [50,20];
+
+        var aR2 = win.add("group");
+        aR2.add("statictext", undefined, "Color:");
+        var aSwatch = aR2.add("button", undefined, "");
+        aSwatch.preferredSize = [24, 22];
+        styleSwatch(aSwatch, state.accentColor);
+        var useObjAccent = aR2.add("checkbox", undefined, "Use obj color");
+        useObjAccent.value = false;
+
+        var aR3 = win.add("group");
+        aR3.add("statictext", undefined, "Every N-th:");
+        var nthSlider = aR3.add("slider", undefined, 6, 2, 20);
+        nthSlider.preferredSize = [110, 20];
+        var nthVal = aR3.add("statictext", undefined, "6");
+        nthVal.preferredSize = [50,20];
+
+        var aR4 = win.add("group");
+        aR4.add("statictext", undefined, "Rings:");
+        var ringInner  = aR4.add("checkbox", undefined, "Inner");
+        var ringMiddle = aR4.add("checkbox", undefined, "Middle");
+        var ringOuter  = aR4.add("checkbox", undefined, "Outer");
+        ringMiddle.value = true;
+
+        addDivider(win);
+
+        // ===== OUTPUT =====
+        addSectionLabel(win, "OUTPUT");
+        var precompCheck = win.add("checkbox", undefined, "Pre-comp result");
+        precompCheck.value = false;
+        var parentCheck = win.add("checkbox", undefined, "Parent to source");
+        parentCheck.value = false;
+
+        addDivider(win);
+
+        var bCreate = win.add("button", undefined, "Create Pattern");
+        var bRegen = win.add("button", undefined, "Re-generate Last");
+
+        // ============================================================
+        // HANDLERS
+        // ============================================================
+        function readState() {
+            state.generateMicro = microCheck.value;
+            state.useObjectColorMicro = useObjMicro.value;
+            state.microSize = mSizeSlider.value;
+            state.microSpacing = mSpacingSlider.value;
+            state.padding = paddingSlider.value;
+            state.spread = spreadSlider.value;
+            state.density = densitySlider.value / 100;
+            state.falloff = falloffDD.selection.text;
+            state.noFade = noFadeCheck.value;
+            state.useObjectColorAccent = useObjAccent.value;
+            state.accentSize = aSizeSlider.value;
+            state.accentEveryN = Math.max(2, Math.round(nthSlider.value));
+            state.accentInner = ringInner.value;
+            state.accentMiddle = ringMiddle.value;
+            state.accentOuter = ringOuter.value;
+            state.precomp = precompCheck.value;
+            state.parentToSource = parentCheck.value;
+        }
+
+        mSizeSlider.onChanging = function(){ mSizeVal.text = Math.round(mSizeSlider.value) + " px"; };
+        mSpacingSlider.onChanging = function(){ mSpacingVal.text = Math.round(mSpacingSlider.value) + " px"; };
+        paddingSlider.onChanging = function(){ paddingVal.text = Math.round(paddingSlider.value) + " px"; };
+        spreadSlider.onChanging = function(){ spreadVal.text = Math.round(spreadSlider.value) + " px"; };
+        densitySlider.onChanging = function(){ densityVal.text = Math.round(densitySlider.value) + "%"; };
+        aSizeSlider.onChanging = function(){ aSizeVal.text = Math.round(aSizeSlider.value) + " px"; };
+        nthSlider.onChanging = function(){ nthVal.text = Math.round(nthSlider.value).toString(); };
+
+        function pickColor(swatch, key) {
+            return function() {
+                var hex = rgbToHex(state[key]);
+                var picked = $.colorPicker(parseInt(hex.replace("#",""),16));
+                if (picked < 0) return;
+                var r = (picked >> 16) & 0xFF;
+                var g = (picked >> 8) & 0xFF;
+                var b = picked & 0xFF;
+                state[key] = [r/255, g/255, b/255];
+                styleSwatch(swatch, state[key]);
+            };
+        }
+        aSwatch.onClick = pickColor(aSwatch, "accentColor");
+        mSwatch.onClick = pickColor(mSwatch, "microColor");
+
+        bCreate.onClick = function() {
+            var L = getSelLayer();
+            if (!L) { alert("Выделите объект-направляющую (Shape Layer / Solid)."); return; }
+            readState();
+            app.beginUndoGroup("DotPattern: Create");
+            try {
+                generatePattern(L, state);
+                lastOpts = cloneOpts(state);
+                lastTargetIndex = L.index;
+            } catch(e) {
+                alert("Generate error: " + e.toString());
+            }
+            app.endUndoGroup();
+        };
+
+        bRegen.onClick = function() {
+            if (!lastOpts) { alert("Нет сохранённых настроек. Сначала создай паттерн."); return; }
+            var comp = getComp(); if (!comp) return;
+            var target = null;
+            try { target = comp.layer(lastTargetIndex); } catch(e){}
+            if (!target) {
+                var sel = getSelLayer();
+                if (!sel) { alert("Источник недоступен. Выдели слой-направляющую."); return; }
+                target = sel;
+            }
+            app.beginUndoGroup("DotPattern: Re-generate");
+            try { generatePattern(target, lastOpts); }
+            catch(e) { alert("Re-gen error: " + e.toString()); }
+            app.endUndoGroup();
+        };
+
+        helpBtn.onClick = showHelp;
+
+        win.layout.layout(true);
+        if (win instanceof Window) { win.center(); win.show(); }
+        return win;
+    }
+
+    function cloneOpts(o) {
+        var n = {};
+        for (var k in o) {
+            if (!o.hasOwnProperty(k)) continue;
+            if (o[k] instanceof Array) n[k] = o[k].slice();
+            else n[k] = o[k];
+        }
+        return n;
+    }
+
+    function addDivider(parent) {
+        var d = parent.add("panel");
+        d.preferredSize.height = 1;
+        d.alignment = ["fill","top"];
+    }
+    function addSectionLabel(parent, text) {
+        var t = parent.add("statictext", undefined, text);
+        try { t.graphics.foregroundColor = t.graphics.newPen(t.graphics.PenType.SOLID_COLOR, COL.accentTxt, 1); } catch(e){}
+    }
+    function styleSwatch(btn, rgb) {
+        try {
+            btn.fillBrush = btn.graphics.newBrush(btn.graphics.BrushType.SOLID_COLOR, [rgb[0], rgb[1], rgb[2], 1]);
+            btn.onDraw = function() {
+                btn.graphics.drawOSControl();
+                btn.graphics.rectPath(2,2,btn.size[0]-4, btn.size[1]-4);
+                btn.graphics.fillPath(btn.fillBrush);
+            };
+        } catch(e){}
+    }
+
+    function showHelp() {
+        var w = new Window("dialog", "ptp_DotPattern — Справка", undefined, {resizeable:true});
+        w.preferredSize = [600, 640];
+        w.margins = 12;
+        var txt = w.add("edittext", undefined, getHelpText(), {multiline:true, scrolling:true, readonly:true});
+        txt.preferredSize = [580, 560];
+        var btn = w.add("button", undefined, "Закрыть");
+        btn.onClick = function(){ w.close(); };
+        w.center(); w.show();
+    }
+
+    function getHelpText() {
+        return [
+            "ptp_DotPattern v1.0.1 — генератор точечных паттернов",
+            "═══════════════════════════════════════════════════════",
+            "",
+            "ИДЕЯ",
+            "Создаёт паттерн из точек вокруг выделенной фигуры.",
+            "Архитектура: единая сетка из колец точек (Micro Grid)",
+            "+ выделенные акцентные точки на 1-3 кольцах внутри сетки",
+            "(Accent Dots). Acent заменяют micro в своей позиции.",
+            "",
+            "═══ MICRO GRID ═══",
+            "Концентрические кольца точек от Padding (отступ от объекта)",
+            "до Padding+Spread (внешний край).",
+            "  Size    — диаметр точки (1–8 px)",
+            "  Color   — цвет; Use obj color — цвет Fill объекта",
+            "  Spacing — шаг между кольцами и между точками внутри",
+            "  Padding — отступ внутреннего кольца от объекта",
+            "  Spread  — насколько далеко наружу простирается сетка",
+            "  Density — % точек от полной решётки (рандомные пропуски)",
+            "  Falloff — затухание opacity от центра наружу:",
+            "    linear / ease / step (три уровня)",
+            "  No fade — отключить затухание, все точки 100% opacity",
+            "",
+            "═══ ACCENT DOTS ═══",
+            "Крупные контрастные точки, замещающие micro на выбранных",
+            "кольцах. Не зависят от Falloff (всегда 100% opacity).",
+            "  Size    — диаметр (2–20 px), обычно в 2-3x больше micro",
+            "  Color   — цвет; Use obj color — цвет Fill объекта",
+            "  Every N-th — каждая N-я точка ряда становится accent",
+            "               (2 = частые, 20 = редкие маркеры)",
+            "  Rings:",
+            "    Inner  — на самом внутреннем кольце (у объекта)",
+            "    Middle — посередине сетки",
+            "    Outer  — на внешней границе",
+            "    Можно включить любую комбинацию",
+            "",
+            "═══ OUTPUT ═══",
+            "  Pre-comp result — упаковать в pre-comp (рекомендуется",
+            "                    для последующей анимации)",
+            "  Parent to source — линковать к источнику (двигаются вместе)",
+            "",
+            "═══ КНОПКИ ═══",
+            "  Create Pattern    — сгенерировать",
+            "  Re-generate Last  — пересоздать с теми же настройками",
+            "                      (даёт новый random pattern)",
+            "",
+            "═══ WORKFLOW ═══",
+            "1. Создай фигуру-направляющую (круг/прямоугольник)",
+            "2. Выдели её",
+            "3. Настрой параметры. По умолчанию: micro по всей зоне,",
+            "   accent на Middle кольце",
+            "4. Жми Create Pattern",
+            "5. Появятся слои DotPattern_Micro + DotPattern_Accent",
+            "6. Источник можно скрыть/удалить — паттерн самостоятельный",
+            "",
+            "═══ FIX v1.0.1 vs v1.0 ═══",
+            "• Anchor Point теперь в центре паттерна (а не в углу комп)",
+            "• Accent — выделенные точки ВНУТРИ единой сетки",
+            "  (не отдельный ряд с зазором)",
+            "• Use object color теперь и для micro (для blend mode)",
+            "• Чекбоксы Inner/Middle/Outer для гибких комбинаций",
+            "• Every N-th — слайдер плотности accent в ряду",
+            "• No fade — равномерная opacity без затухания",
+            "",
+            "═══ ОГРАНИЧЕНИЯ ═══",
+            "• Максимум 2000 точек",
+            "• Auto-detect формы — только для одиночных rect/ellipse",
+            "• Если объект имеет скругление, сетка идёт по острым",
+            "  углам (упрощение v1.0.1, исправим в v1.1)",
+            "",
+            "═══ ПЛАН ═══",
+            "v1.1 — Along Path mode (произвольные кривые, Bezier)",
+            "v1.2 — Element types: Cross / Line / Square / Triangle",
+            "       (общий шаблон для D37/D38/D39 рефов)",
+            "v1.3 — Fill mode (паттерн заполняет весь экран)",
+            "v1.4 — Animate Drift (отдельный аниматор)"
+        ].join("\n");
+    }
+
+    buildUI(thisObj);
+
+})(this);
+
+
+
+
+
+
+
+
+
+// ============================================================
+// ptp_DotPattern.jsx
 // v1.1 — Along Path + Coverage filter (cross UI)
 // Author: ptp toolkit
 // Install: Save into "Support Files/Scripts/ScriptUI Panels/"
