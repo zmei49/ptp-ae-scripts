@@ -2423,3 +2423,55 @@ opts.mode = ["auto", "around", "along"][modeDD.selection.index];
     buildUI(thisObj);
 })(this);
 
+
+Патч UI — точечные правки
+
+Открой ptp_DotPattern.jsx, найди функцию buildCross внутри buildUI() и замени её целиком на эту версию:
+
+function buildCross(parent, title) {
+    var box = parent.add("panel", undefined, title);
+    box.orientation = "column";
+    box.alignChildren = ["center", "center"];
+    box.margins = 8;
+    box.spacing = 4;
+    box.preferredSize.width = 110;
+
+    var CB_W = 28; // фиксированная ширина чекбокса
+
+    var topRow = box.add("group"); topRow.alignment = "center"; topRow.spacing = 4;
+    var cbT = topRow.add("checkbox", undefined, "▲");
+    cbT.preferredSize = [CB_W, 22];
+
+    var midRow = box.add("group"); midRow.alignment = "center"; midRow.spacing = 4;
+    var cbL = midRow.add("checkbox", undefined, "◀");
+    cbL.preferredSize = [CB_W, 22];
+    var cbC = midRow.add("checkbox", undefined, "◆");
+    cbC.preferredSize = [CB_W, 22];
+    var cbR = midRow.add("checkbox", undefined, "▶");
+    cbR.preferredSize = [CB_W, 22];
+
+    var botRow = box.add("group"); botRow.alignment = "center"; botRow.spacing = 4;
+    var cbB = botRow.add("checkbox", undefined, "▼");
+    cbB.preferredSize = [CB_W, 22];
+
+    return { top: cbT, left: cbL, center: cbC, right: cbR, bottom: cbB };
+}
+
+И сразу после строки
+
+var title = w.add("statictext", undefined, SCRIPT_NAME + "  " + SCRIPT_VERSION);
+
+добавь:
+
+title.preferredSize.width = 200;
+
+Чтобы заголовок целиком влезал.
+
+Также найди строку с covRow:
+
+covRow.spacing = 12;
+
+и замени на:
+
+covRow.spacing = 8;
+covRow.alignment = "center";
