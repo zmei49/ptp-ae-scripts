@@ -1,7 +1,6 @@
 // ============================================================
 // ptp_DotPattern.jsx
-// v1.2 — v1.0.1 base + Along Path mode (Mask / Shape path)
-//       Coverage Top/Down side only in Along Path
+// v1.3 — Element types (10), per-section stroke width, rotate to path
 // Author: ptp toolkit
 // Install: Save into "Support Files/Scripts/ScriptUI Panels/"
 // Run via: Window -> ptp_DotPattern.jsx
@@ -10,7 +9,7 @@
 (function ptp_DotPattern(thisObj) {
 
     var SCRIPT_NAME = "ptp_DotPattern";
-    var SCRIPT_VERSION = "v1.2";
+    var SCRIPT_VERSION = "v1.3";
 
     var COL = {
         bg:        [0.16, 0.16, 0.17, 1],
@@ -21,7 +20,34 @@
     var DEFAULT_ACCENT = [1.00, 0.96, 0.40];
     var DEFAULT_MICRO  = [0.79, 0.76, 0.40];
 
-    var MAX_DOTS = 2000;
+    var SOFT_WARN_DOTS = 5000;
+
+    var ELEMENT_TYPES = [
+        "Dot",
+        "Circle (stroke)",
+        "Circle + dot",
+        "Circle + plus",
+        "Cross (+)",
+        "X (×)",
+        "Square (stroke)",
+        "Square (filled)",
+        "Concentric rings",
+        "Dashed circle"
+    ];
+
+    // Дефолтные размеры по типу (используются если юзер сам не менял Size)
+    var DEFAULT_SIZE_BY_TYPE = {
+        "Dot": 2,
+        "Circle (stroke)": 12,
+        "Circle + dot": 14,
+        "Circle + plus": 14,
+        "Cross (+)": 10,
+        "X (×)": 10,
+        "Square (stroke)": 12,
+        "Square (filled)": 12,
+        "Concentric rings": 16,
+        "Dashed circle": 14
+    };
 
     var lastOpts = null;
     var lastTargetIdx = null;
@@ -34,23 +60,20 @@
         if (!c || !(c instanceof CompItem)) { alert("Откройте композицию."); return null; }
         return c;
     }
-
     function getSelLayer() {
         var c = getComp(); if (!c) return null;
         var s = c.selectedLayers;
         if (s.length === 0) return null;
         return s[0];
     }
-
     function rgbToHex(rgb) {
         function p(n){ var h=Math.round(n*255).toString(16); return h.length<2?"0"+h:h; }
         return "#" + p(rgb[0]) + p(rgb[1]) + p(rgb[2]);
     }
-
     function clamp(v, lo, hi){ return v<lo?lo:(v>hi?hi:v); }
 
     // ============================================================
-    // SOURCE OBJECT ANALYSIS (без изменений из v1.0.1)
+    // SOURCE OBJECT ANALYSIS (с приоритетом Stroke и проверкой Opacity)
     // ============================================================
     function getSourceInfo(layer) {
         var info = {kind:"rect", cx:0, cy:0, w:200, h:200, radius:0, color:DEFAULT_ACCENT.slice()};
@@ -83,13 +106,12 @@
                             try { info.radius = p.property("Roundness").value; } catch(e){}
                         }
                     }
-                                      // Сначала ищем Stroke (для линий и обводок), потом Fill (для закрытых фигур)
+                    // Сначала ищем Stroke (для линий и обводок), потом Fill (для закрытых фигур)
                     var foundColor = false;
                     for (var k=1; k<=inner.numProperties; k++) {
                         if (inner.property(k).matchName === "ADBE Vector Graphic - Stroke") {
                             try {
                                 var strokeColor = inner.property(k).property("Color").value;
-                                // проверим что Stroke включён (Opacity > 0)
                                 var strokeOp = 100;
                                 try { strokeOp = inner.property(k).property("Opacity").value; } catch(e){}
                                 if (strokeOp > 0) {
@@ -116,31 +138,27 @@
                             }
                         }
                     }
-
                 }
             } catch(e) {}
-               } else {
+        } else {
             try {
                 var rect = layer.sourceRectAtTime(layer.containingComp.time, false);
                 info.w = rect.width;
                 info.h = rect.height;
                 info.kind = "rect";
             } catch(e) {}
-            // Цвет солида
             try {
                 if (layer.source && layer.source.mainSource && layer.source.mainSource.color) {
                     info.color = layer.source.mainSource.color;
                 }
             } catch(e) {}
-    
         }
-
 
         return info;
     }
 
     // ============================================================
-    // FALLOFF (без изменений из v1.0.1)
+    // FALLOFF
     // ============================================================
     function falloff(t, type) {
         var v = 1 - t;
@@ -156,7 +174,7 @@
     }
 
     // ============================================================
-    // RING POINT GENERATION (без изменений из v1.0.1)
+    // RING POINT GENERATION
     // ============================================================
     function generateRingPoints(info, distance, spacing) {
         var points = [];
@@ -172,7 +190,7 @@
                 points.push({
                     x: info.cx + R * Math.cos(a),
                     y: info.cy + R * Math.sin(a),
-                    ringIndex: 0
+                    rot: 0
                 });
             }
         } else {
@@ -186,17 +204,17 @@
 
             var topCount = Math.max(2, Math.floor((right - left) / spacing));
             for (var t=0; t<=topCount; t++) {
-                points.push({ x: left + t*(right-left)/topCount, y: top, ringIndex: 0 });
+                points.push({ x: left + t*(right-left)/topCount, y: top, rot: 0 });
             }
             var sideCount = Math.max(1, Math.floor((bottom - top) / spacing));
             for (var s=1; s<sideCount; s++) {
-                points.push({ x: right, y: top + s*(bottom-top)/sideCount, ringIndex: 0 });
+                points.push({ x: right, y: top + s*(bottom-top)/sideCount, rot: 0 });
             }
             for (var b=topCount; b>=0; b--) {
-                points.push({ x: left + b*(right-left)/topCount, y: bottom, ringIndex: 0 });
+                points.push({ x: left + b*(right-left)/topCount, y: bottom, rot: 0 });
             }
             for (var l=sideCount-1; l>=1; l--) {
-                points.push({ x: left, y: top + l*(bottom-top)/sideCount, ringIndex: 0 });
+                points.push({ x: left, y: top + l*(bottom-top)/sideCount, rot: 0 });
             }
         }
 
@@ -204,7 +222,7 @@
     }
 
     // ============================================================
-    // AROUND SHAPE — генерация (без изменений из v1.0.1)
+    // AROUND SHAPE
     // ============================================================
     function generateAroundPattern(info, opts) {
         var microPts = [];
@@ -236,10 +254,10 @@
                 var pt = ringPts[j];
 
                 if (isAccentRing && (j % opts.accentEveryN === 0)) {
-                    accentPts.push({x: pt.x, y: pt.y, opacity: 1.0});
+                    accentPts.push({x: pt.x, y: pt.y, opacity: 1.0, rot: 0});
                 } else {
                     if (Math.random() > opts.density) continue;
-                    microPts.push({x: pt.x, y: pt.y, opacity: op});
+                    microPts.push({x: pt.x, y: pt.y, opacity: op, rot: 0});
                 }
             }
         }
@@ -248,7 +266,7 @@
     }
 
     // ============================================================
-    // ALONG PATH — поиск пути и сэмплирование (из v1.1)
+    // ALONG PATH — поиск пути и сэмплирование
     // ============================================================
     function findPathInLayer(layer) {
         try {
@@ -308,7 +326,7 @@
         try { lpos = layer.property("Transform").property("Position").value; }
         catch (e) { lpos = [0, 0]; }
 
-        var SAMPLES = 40; // экономно — 40 на сегмент
+        var SAMPLES = 40;
         var segments = closed ? verts.length : (verts.length - 1);
         if (segments < 1) return [];
 
@@ -330,6 +348,7 @@
                 var pt = bezierPoint(p0, p1, p2, p3, t);
                 var tan = bezierTangent(p0, p1, p2, p3, t);
                 var nrm = [-tan[1], tan[0]];
+                var ang = Math.atan2(nrm[1], nrm[0]) * 180 / Math.PI;
 
                 if (prevPt) {
                     var dx = pt[0]-prevPt[0], dy = pt[1]-prevPt[1];
@@ -337,14 +356,14 @@
                 }
                 prevPt = pt;
 
-                samples.push({ pos: pt, normal: nrm, cumLen: cumLen });
+                samples.push({ pos: pt, normal: nrm, angle: ang, cumLen: cumLen });
             }
         }
         return samples;
     }
 
     // ============================================================
-    // ALONG PATH — генерация (с Coverage Top/Down)
+    // ALONG PATH — генерация
     // ============================================================
     function generateAlongPattern(samples, opts) {
         var microPts = [];
@@ -365,42 +384,42 @@
         if (opts.accentMiddle) accentRingSet[middleRing] = true;
         if (opts.accentOuter)  accentRingSet[outerRing]  = true;
 
-        var allowTop = opts.alongTop;       // положительная сторона нормали
-        var allowDown = opts.alongDown;     // отрицательная
+        var allowTop = opts.alongTop;
+        var allowDown = opts.alongDown;
         if (!allowTop && !allowDown) { allowTop = true; allowDown = true; }
 
-        // прореживание точек вдоль пути по spacing
         var sampleStep = Math.max(1, Math.round(opts.microSpacing / 4));
+        var rotate = opts.rotateToPath;
 
         for (var i=0; i<samples.length; i += sampleStep) {
             var s = samples[i];
             var nx = s.normal[0], ny = s.normal[1];
+            var ang = rotate ? s.angle : 0;
 
             for (var ri=0; ri<ringDistances.length; ri++) {
                 var d = ringDistances[ri];
                 var t = ringDistances.length > 1 ? (ri / (ringDistances.length-1)) : 0;
                 var op = opts.noFade ? 1.0 : falloff(t, opts.falloff);
                 var isAccentRing = accentRingSet[ri] === true;
+                var isAccentSample = (i % (opts.accentEveryN * sampleStep) === 0);
 
-                // Top side (positive normal)
                 if (allowTop) {
                     var ptT = { x: s.pos[0] + nx*d, y: s.pos[1] + ny*d };
-                    if (isAccentRing && (i % (opts.accentEveryN * sampleStep) === 0)) {
-                        accentPts.push({x: ptT.x, y: ptT.y, opacity: 1.0});
+                    if (isAccentRing && isAccentSample) {
+                        accentPts.push({x: ptT.x, y: ptT.y, opacity: 1.0, rot: ang});
                     } else {
                         if (Math.random() <= opts.density) {
-                            microPts.push({x: ptT.x, y: ptT.y, opacity: op});
+                            microPts.push({x: ptT.x, y: ptT.y, opacity: op, rot: ang});
                         }
                     }
                 }
-                // Down side (negative normal)
                 if (allowDown) {
                     var ptD = { x: s.pos[0] - nx*d, y: s.pos[1] - ny*d };
-                    if (isAccentRing && (i % (opts.accentEveryN * sampleStep) === 0)) {
-                        accentPts.push({x: ptD.x, y: ptD.y, opacity: 1.0});
+                    if (isAccentRing && isAccentSample) {
+                        accentPts.push({x: ptD.x, y: ptD.y, opacity: 1.0, rot: ang + 180});
                     } else {
                         if (Math.random() <= opts.density) {
-                            microPts.push({x: ptD.x, y: ptD.y, opacity: op});
+                            microPts.push({x: ptD.x, y: ptD.y, opacity: op, rot: ang + 180});
                         }
                     }
                 }
@@ -419,16 +438,148 @@
         if (path.type === "mask") return "along";
         try {
             var v = path.prop.value.vertices;
-            // rect-like shape (4 vertices) и ellipse → around
             if (v.length <= 4) return "around";
         } catch (e) {}
         return "along";
     }
 
     // ============================================================
-    // LAYER CREATION (с правильным anchor — из v1.0.1)
+    // ELEMENT CREATION — создаёт примитивы внутри переданной inner Group
     // ============================================================
-    function createDotLayer(comp, name, dots, size, color) {
+    function addEllipse(inner, size, name) {
+        var ell = inner.addProperty("ADBE Vector Shape - Ellipse");
+        ell.property("Size").setValue([size, size]);
+        ell.property("Position").setValue([0, 0]);
+        if (name) try { ell.name = name; } catch(e){}
+        return ell;
+    }
+    function addRect(inner, size, name) {
+        var r = inner.addProperty("ADBE Vector Shape - Rect");
+        r.property("Size").setValue([size, size]);
+        r.property("Position").setValue([0, 0]);
+        if (name) try { r.name = name; } catch(e){}
+        return r;
+    }
+    function addLine(inner, x1, y1, x2, y2) {
+        var sp = inner.addProperty("ADBE Vector Shape - Group");
+        var pathVal = new Shape();
+        pathVal.vertices = [[x1, y1], [x2, y2]];
+        pathVal.inTangents = [[0,0],[0,0]];
+        pathVal.outTangents = [[0,0],[0,0]];
+        pathVal.closed = false;
+        sp.property("Path").setValue(pathVal);
+        return sp;
+    }
+    function addFill(inner, color, opacity) {
+        var f = inner.addProperty("ADBE Vector Graphic - Fill");
+        f.property("Color").setValue(color);
+        f.property("Opacity").setValue(opacity != null ? opacity : 100);
+        return f;
+    }
+    function addStroke(inner, color, width, opacity) {
+        var s = inner.addProperty("ADBE Vector Graphic - Stroke");
+        s.property("Color").setValue(color);
+        s.property("Stroke Width").setValue(width);
+        s.property("Opacity").setValue(opacity != null ? opacity : 100);
+        return s;
+    }
+    function addDashes(strokeProp, dashLen, gapLen) {
+        try {
+            var dashes = strokeProp.property("ADBE Vector Stroke Dashes");
+            if (dashes) {
+                var d = dashes.addProperty("ADBE Vector Stroke Dash 1");
+                d.setValue(dashLen);
+                var g = dashes.addProperty("ADBE Vector Stroke Gap 1");
+                g.setValue(gapLen);
+            }
+        } catch(e) {}
+    }
+
+    // Создаёт один штамп заданного типа в group (которая уже добавлена в layer)
+    function buildElement(group, type, size, color, strokeWidth, opacity) {
+        var inner = group.property("ADBE Vectors Group");
+
+        if (type === "Dot") {
+            addEllipse(inner, size);
+            addFill(inner, color, opacity);
+
+        } else if (type === "Circle (stroke)") {
+            addEllipse(inner, size);
+            addStroke(inner, color, strokeWidth, opacity);
+
+        } else if (type === "Circle + dot") {
+            // outer circle stroke
+            var oG = inner.addProperty("ADBE Vector Group"); oG.name = "outer";
+            var oIn = oG.property("ADBE Vectors Group");
+            addEllipse(oIn, size);
+            addStroke(oIn, color, strokeWidth, opacity);
+            // inner dot
+            var iG = inner.addProperty("ADBE Vector Group"); iG.name = "dot";
+            var iIn = iG.property("ADBE Vectors Group");
+            addEllipse(iIn, size * 0.3);
+            addFill(iIn, color, opacity);
+
+        } else if (type === "Circle + plus") {
+            // outer circle stroke
+            var oG2 = inner.addProperty("ADBE Vector Group"); oG2.name = "outer";
+            var oIn2 = oG2.property("ADBE Vectors Group");
+            addEllipse(oIn2, size);
+            addStroke(oIn2, color, strokeWidth, opacity);
+            // inner plus
+            var pG = inner.addProperty("ADBE Vector Group"); pG.name = "plus";
+            var pIn = pG.property("ADBE Vectors Group");
+            var plusLen = size * 0.4;
+            addLine(pIn, -plusLen/2, 0, plusLen/2, 0);
+            addLine(pIn, 0, -plusLen/2, 0, plusLen/2);
+            addStroke(pIn, color, strokeWidth, opacity);
+
+        } else if (type === "Cross (+)") {
+            addLine(inner, -size/2, 0, size/2, 0);
+            addLine(inner, 0, -size/2, 0, size/2);
+            addStroke(inner, color, strokeWidth, opacity);
+
+        } else if (type === "X (×)") {
+            var h = size/2;
+            addLine(inner, -h, -h, h, h);
+            addLine(inner, -h, h, h, -h);
+            addStroke(inner, color, strokeWidth, opacity);
+
+        } else if (type === "Square (stroke)") {
+            addRect(inner, size);
+            addStroke(inner, color, strokeWidth, opacity);
+
+        } else if (type === "Square (filled)") {
+            addRect(inner, size);
+            addFill(inner, color, opacity);
+
+        } else if (type === "Concentric rings") {
+            // 3 кольца
+            var r1G = inner.addProperty("ADBE Vector Group"); r1G.name = "ring1";
+            addEllipse(r1G.property("ADBE Vectors Group"), size);
+            addStroke(r1G.property("ADBE Vectors Group"), color, strokeWidth, opacity);
+            var r2G = inner.addProperty("ADBE Vector Group"); r2G.name = "ring2";
+            addEllipse(r2G.property("ADBE Vectors Group"), size * 0.65);
+            addStroke(r2G.property("ADBE Vectors Group"), color, strokeWidth, opacity);
+            var r3G = inner.addProperty("ADBE Vector Group"); r3G.name = "ring3";
+            addEllipse(r3G.property("ADBE Vectors Group"), size * 0.35);
+            addStroke(r3G.property("ADBE Vectors Group"), color, strokeWidth, opacity);
+
+        } else if (type === "Dashed circle") {
+            addEllipse(inner, size);
+            var strokeP = addStroke(inner, color, strokeWidth, opacity);
+            addDashes(strokeP, 4, 3);
+
+        } else {
+            // fallback
+            addEllipse(inner, size);
+            addFill(inner, color, opacity);
+        }
+    }
+
+    // ============================================================
+    // LAYER CREATION
+    // ============================================================
+    function createDotLayer(comp, name, dots, type, size, color, strokeWidth) {
         if (dots.length === 0) return null;
 
         var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -443,41 +594,20 @@
 
         var layer = comp.layers.addShape();
         layer.name = name;
-
-        // группируем по opacity для экономии
-        var buckets = {};
-        for (var j=0; j<dots.length; j++) {
-            var d = dots[j];
-            var key = Math.round(d.opacity * 20) / 20;
-            if (!buckets[key]) buckets[key] = [];
-            buckets[key].push([d.x, d.y]);
-        }
-
         var contents = layer.property("ADBE Root Vectors Group");
 
-        for (var op in buckets) {
-            if (!buckets.hasOwnProperty(op)) continue;
-            var pts = buckets[op];
-            var grp = contents.addProperty("ADBE Vector Group");
-            grp.name = "Op_" + op;
-            var inner = grp.property("ADBE Vectors Group");
+        for (var j=0; j<dots.length; j++) {
+            var d = dots[j];
+            var elemGrp = contents.addProperty("ADBE Vector Group");
+            elemGrp.name = "Elem_" + j;
+            buildElement(elemGrp, type, size, color, strokeWidth, d.opacity * 100);
 
-            for (var m=0; m<pts.length; m++) {
-                var dotGrp = inner.addProperty("ADBE Vector Group");
-                dotGrp.name = "Dot";
-                var dotInner = dotGrp.property("ADBE Vectors Group");
-                var ell = dotInner.addProperty("ADBE Vector Shape - Ellipse");
-                ell.property("Size").setValue([size, size]);
-                ell.property("Position").setValue([0, 0]);
-                try {
-                    dotGrp.property("Transform").property("Position")
-                        .setValue([pts[m][0] - bbCx, pts[m][1] - bbCy]);
-                } catch(e) {}
-            }
-
-            var fill = inner.addProperty("ADBE Vector Graphic - Fill");
-            fill.property("Color").setValue(color);
-            fill.property("Opacity").setValue(parseFloat(op) * 100);
+            // позиция и поворот через Transform группы
+            try {
+                var tr = elemGrp.property("Transform");
+                tr.property("Position").setValue([d.x - bbCx, d.y - bbCy]);
+                if (d.rot) tr.property("Rotation").setValue(d.rot);
+            } catch(e) {}
         }
 
         try {
@@ -508,7 +638,7 @@
             var samples = samplePath(pathInfo, layer);
             if (!samples.length) { alert("Не удалось получить точки на пути."); return; }
             result = generateAlongPattern(samples, opts);
-            info = getSourceInfo(layer); // для color
+            info = getSourceInfo(layer);
         } else {
             info = getSourceInfo(layer);
             result = generateAroundPattern(info, opts);
@@ -516,16 +646,22 @@
 
         var total = result.microPts.length + result.accentPts.length;
         if (total === 0) { alert("Нет точек для генерации."); return; }
-        if (total > MAX_DOTS) {
-            if (!confirm("Будет создано " + total + " точек (лимит " + MAX_DOTS + ").\nПродолжить?")) return;
+        if (total > SOFT_WARN_DOTS) {
+            if (!confirm("Будет создано " + total + " элементов. Это может занять время.\nПродолжить?")) return;
         }
 
         var microColor = (opts.useObjColorMicro && info && info.color) ? info.color : opts.microColor;
         var accentColor = (opts.useObjColorAccent && info && info.color) ? info.color : opts.accentColor;
 
         app.beginUndoGroup(SCRIPT_NAME + " — Generate");
-        var microLayer = createDotLayer(comp, "DotPattern_Micro", result.microPts, opts.microSize, microColor);
-        var accentLayer = createDotLayer(comp, "DotPattern_Accent", result.accentPts, opts.accentSize, accentColor);
+        var microLayer = createDotLayer(
+            comp, "DotPattern_Micro",
+            result.microPts, opts.microElement, opts.microSize, microColor, opts.microStrokeWidth
+        );
+        var accentLayer = createDotLayer(
+            comp, "DotPattern_Accent",
+            result.accentPts, opts.accentElement, opts.accentSize, accentColor, opts.accentStrokeWidth
+        );
 
         if (opts.preComp) {
             var idxs = [];
@@ -617,7 +753,7 @@
 
         addDivider(w);
 
-        // COVERAGE (только для Along Path)
+        // COVERAGE
         addSectionLabel(w, "COVERAGE (Along Path only)");
         var covRow = w.add("group");
         covRow.orientation = "row";
@@ -627,28 +763,25 @@
         var cbDown = covRow.add("checkbox", undefined, "▼ Down side");
         cbTop.value = true;
         cbDown.value = true;
+        var rotateRow = w.add("group");
+        var cbRotate = rotateRow.add("checkbox", undefined, "Rotate elements to path");
 
         function updateCoverageState() {
             var idx = modeDD.selection ? modeDD.selection.index : 0;
-            var isAlong = (idx === 2);
-            // в Auto-detect оставляем активными (на случай если выделен путь)
-            var enabled = (idx !== 1); // 1 = Around Shape явно
+            var enabled = (idx !== 1);
             cbTop.enabled = enabled;
             cbDown.enabled = enabled;
+            cbRotate.enabled = enabled;
         }
         modeDD.onChange = updateCoverageState;
         updateCoverageState();
 
         addDivider(w);
 
-        // MICRO GRID
-        addSectionLabel(w, "MICRO GRID");
-        var microState = { color: DEFAULT_MICRO.slice() };
-
         function mkSlider(parent, label, init, lo, hi, suffix, isFloat) {
             var g = parent.add("group");
             var l = g.add("statictext", undefined, label);
-            l.preferredSize.width = 70;
+            l.preferredSize.width = 80;
             var s = g.add("slider", undefined, init, lo, hi);
             s.preferredSize.width = 110;
             var v = g.add("statictext", undefined, (isFloat ? init.toFixed(2) : Math.round(init)) + (suffix||""));
@@ -659,9 +792,22 @@
             return s;
         }
 
-        var microSizeSl = mkSlider(w, "Size:", 2, 1, 10, " px");
+        // ===== MICRO GRID =====
+        addSectionLabel(w, "MICRO GRID");
+        var microState = { color: DEFAULT_MICRO.slice() };
+
+        var microElemG = w.add("group");
+        var meL = microElemG.add("statictext", undefined, "Element:");
+        meL.preferredSize.width = 80;
+        var microElemDD = microElemG.add("dropdownlist", undefined, ELEMENT_TYPES);
+        microElemDD.selection = 0;
+        microElemDD.preferredSize.width = 160;
+
+        var microSizeSl = mkSlider(w, "Size:", 2, 1, 30, " px");
+        var microStrokeSl = mkSlider(w, "Stroke W:", 2, 1, 5, " px");
+
         var microColorG = w.add("group");
-        var mcL = microColorG.add("statictext", undefined, "Color:"); mcL.preferredSize.width = 70;
+        var mcL = microColorG.add("statictext", undefined, "Color:"); mcL.preferredSize.width = 80;
         var microColorBtn = microColorG.add("button", undefined, " ");
         microColorBtn.preferredSize = [40, 20];
         styleSwatch(microColorBtn, microState.color);
@@ -677,20 +823,29 @@
         var densSl = mkSlider(w, "Density:", 0.7, 0.3, 1, "", true);
 
         var falloffG = w.add("group");
-        var fL = falloffG.add("statictext", undefined, "Falloff:"); fL.preferredSize.width = 70;
+        var fL = falloffG.add("statictext", undefined, "Falloff:"); fL.preferredSize.width = 80;
         var falloffDD = falloffG.add("dropdownlist", undefined, ["linear","ease","step"]);
         falloffDD.selection = 0;
         var noFadeCB = falloffG.add("checkbox", undefined, "No fade");
 
         addDivider(w);
 
-        // ACCENT DOTS
+        // ===== ACCENT DOTS =====
         addSectionLabel(w, "ACCENT DOTS");
         var accentState = { color: DEFAULT_ACCENT.slice() };
 
-        var accSizeSl = mkSlider(w, "Size:", 6, 2, 20, " px");
+        var accElemG = w.add("group");
+        var aeL = accElemG.add("statictext", undefined, "Element:");
+        aeL.preferredSize.width = 80;
+        var accElemDD = accElemG.add("dropdownlist", undefined, ELEMENT_TYPES);
+        accElemDD.selection = 0;
+        accElemDD.preferredSize.width = 160;
+
+        var accSizeSl = mkSlider(w, "Size:", 6, 2, 40, " px");
+        var accStrokeSl = mkSlider(w, "Stroke W:", 2, 1, 5, " px");
+
         var accColorG = w.add("group");
-        var acL = accColorG.add("statictext", undefined, "Color:"); acL.preferredSize.width = 70;
+        var acL = accColorG.add("statictext", undefined, "Color:"); acL.preferredSize.width = 80;
         var accColorBtn = accColorG.add("button", undefined, " ");
         accColorBtn.preferredSize = [40, 20];
         styleSwatch(accColorBtn, accentState.color);
@@ -703,7 +858,7 @@
         var accNthSl = mkSlider(w, "Every N-th:", 6, 2, 20, "");
 
         var ringG = w.add("group");
-        var rL = ringG.add("statictext", undefined, "Rings:"); rL.preferredSize.width = 70;
+        var rL = ringG.add("statictext", undefined, "Rings:"); rL.preferredSize.width = 80;
         var accInnerCB  = ringG.add("checkbox", undefined, "Inner");
         var accMiddleCB = ringG.add("checkbox", undefined, "Middle");
         var accOuterCB  = ringG.add("checkbox", undefined, "Outer");
@@ -711,7 +866,7 @@
 
         addDivider(w);
 
-        // OUTPUT
+        // ===== OUTPUT =====
         addSectionLabel(w, "OUTPUT");
         var outG = w.add("group");
         var preCompCB = outG.add("checkbox", undefined, "Pre-comp result");
@@ -726,12 +881,36 @@
         var helpBtn = btnRow.add("button", undefined, "?");
         helpBtn.preferredSize.width = 30;
 
+        // Авто-подсказка размера при смене Element Type (только если юзер не менял)
+        var microSizeUserChanged = false;
+        var accSizeUserChanged = false;
+        microSizeSl.onChange = function(){ microSizeUserChanged = true; };
+        accSizeSl.onChange = function(){ accSizeUserChanged = true; };
+        microElemDD.onChange = function(){
+            if (!microSizeUserChanged) {
+                var def = DEFAULT_SIZE_BY_TYPE[microElemDD.selection.text] || 2;
+                microSizeSl.value = def;
+                microSizeSl.notify("onChanging");
+            }
+        };
+        accElemDD.onChange = function(){
+            if (!accSizeUserChanged) {
+                var def = DEFAULT_SIZE_BY_TYPE[accElemDD.selection.text] || 6;
+                accSizeSl.value = def;
+                accSizeSl.notify("onChanging");
+            }
+        };
+
         function readState() {
             return {
                 mode: ["auto","around","along"][modeDD.selection.index],
                 alongTop: cbTop.value,
                 alongDown: cbDown.value,
+                rotateToPath: cbRotate.value,
+
+                microElement: microElemDD.selection.text,
                 microSize: Math.round(microSizeSl.value),
+                microStrokeWidth: Math.round(microStrokeSl.value),
                 microColor: microState.color,
                 useObjColorMicro: microUseObjCB.value,
                 microSpacing: Math.round(microSpacingSl.value),
@@ -740,13 +919,17 @@
                 density: densSl.value,
                 falloff: falloffDD.selection.text,
                 noFade: noFadeCB.value,
+
+                accentElement: accElemDD.selection.text,
                 accentSize: Math.round(accSizeSl.value),
+                accentStrokeWidth: Math.round(accStrokeSl.value),
                 accentColor: accentState.color,
                 useObjColorAccent: accUseObjCB.value,
                 accentEveryN: Math.round(accNthSl.value),
                 accentInner: accInnerCB.value,
                 accentMiddle: accMiddleCB.value,
                 accentOuter: accOuterCB.value,
+
                 preComp: preCompCB.value,
                 parentToSource: parentCB.value
             };
@@ -772,92 +955,69 @@
         return w;
     }
 
-        function getHelpText() {
+    function getHelpText() {
         return SCRIPT_NAME + " " + SCRIPT_VERSION + "\n" +
             "═══════════════════════════════════════\n\n" +
             "НАЗНАЧЕНИЕ\n" +
-            "Создаёт паттерн из точек вокруг фигуры или вдоль пути.\n" +
-            "После генерации источник можно скрыть/удалить — паттерн остаётся.\n\n" +
+            "Создаёт паттерн из элементов (точки, круги, плюсы и т.д.)\n" +
+            "вокруг фигуры или вдоль пути. Источник можно скрыть/удалить —\n" +
+            "паттерн остаётся.\n\n" +
 
-            "═══ MODE (режим работы) ═══\n" +
-            "• Auto-detect — автоматически выбирает режим по выделенному слою.\n" +
-            "    Shape rect/ellipse → Around Shape\n" +
-            "    Слой с маской или сложный path → Along Path\n" +
-            "• Around Shape — концентрические кольца точек вокруг фигуры.\n" +
-            "    Подходит для прямоугольников и кругов.\n" +
-            "• Along Path — точки откладываются по нормали от пути.\n" +
-            "    Источник пути: Mask Path (маска слоя) или Shape Path (произвольный путь в Shape Layer).\n" +
-            "    Авто-fallback: если на слое одна маска, она берётся автоматически.\n\n" +
+            "═══ MODE ═══\n" +
+            "Auto-detect — авто-выбор режима по выделенному слою.\n" +
+            "Around Shape — концентрические кольца вокруг фигуры.\n" +
+            "Along Path — элементы вдоль маски или Shape Path.\n\n" +
 
             "═══ COVERAGE (Along Path only) ═══\n" +
-            "• ▲ Top side — точки с положительной стороны нормали пути.\n" +
-            "• ▼ Down side — точки с отрицательной стороны нормали пути.\n" +
-            "Для замкнутого пути (например овальная маска):\n" +
-            "    Top side = снаружи контура, Down side = внутри.\n" +
-            "Для открытого пути направление зависит от порядка точек пути.\n" +
-            "В режиме Around Shape оба чекбокса серые и не работают.\n\n" +
+            "▲ Top side / ▼ Down side — стороны нормали к пути.\n" +
+            "Rotate elements to path — поворот штампов по нормали.\n" +
+            "Заметно для асимметричных элементов (Cross, X, Square, Dashed).\n\n" +
 
-            "═══ MICRO GRID (мелкая сетка точек) ═══\n" +
-            "• Size — размер точки в пикселях (1-10).\n" +
-            "• Color — основной цвет точек.\n" +
-            "• Use object color — взять цвет из выделенного слоя:\n" +
-            "    Shape Layer → цвет Fill, иначе Stroke.\n" +
-            "    Solid Layer → цвет самого солида.\n" +
-            "    Footage → дефолтный цвет.\n" +
-            "• Spacing — расстояние между точками (3-30 px).\n" +
-            "• Padding — отступ первого кольца от границы объекта/пути.\n" +
-            "• Spread — толщина паттерна (на сколько px колец отойдёт от объекта).\n" +
-            "• Density — вероятность отрисовки точки (0.3-1.0). 1.0 = все точки.\n" +
-            "• Falloff — закон затухания прозрачности по мере удаления:\n" +
-            "    linear — равномерное\n" +
-            "    ease — кубическое (быстрое затухание у края)\n" +
-            "    step — ступенчатое (3 уровня яркости)\n" +
-            "• No fade — отключает затухание, все точки 100% непрозрачные.\n\n" +
+            "═══ ELEMENT TYPES ═══\n" +
+            "Dot — заливная точка.\n" +
+            "Circle (stroke) — окружность с обводкой.\n" +
+            "Circle + dot — окружность с точкой по центру.\n" +
+            "Circle + plus — окружность с плюсом по центру.\n" +
+            "Cross (+) — крестик из двух линий.\n" +
+            "X (×) — диагональный крест.\n" +
+            "Square (stroke) — квадрат с обводкой.\n" +
+            "Square (filled) — закрашенный квадрат.\n" +
+            "Concentric rings — 3 концентрические окружности.\n" +
+            "Dashed circle — окружность с прерывистой обводкой.\n\n" +
 
-            "═══ ACCENT DOTS (крупные акцентные точки) ═══\n" +
-            "Акценты заменяют micro-точки в выбранных кольцах.\n" +
-            "• Size — размер акцентной точки (2-20 px).\n" +
-            "• Color — цвет.\n" +
-            "• Use object color — то же, что для micro.\n" +
-            "• Every N-th — каждая N-я точка кольца становится акцентом (2-20).\n" +
-            "    2 = очень густо, 20 = очень редко.\n" +
-            "• Rings — на каких кольцах размещать акценты:\n" +
-            "    Inner — ближайшее к объекту\n" +
-            "    Middle — среднее\n" +
-            "    Outer — самое дальнее\n" +
-            "Можно включить несколько одновременно.\n\n" +
+            "═══ MICRO GRID ═══\n" +
+            "Element — тип элемента (10 вариантов).\n" +
+            "Size — размер элемента (1-30 px).\n" +
+            "Stroke W — толщина обводки (1-5 px) для всех элементов с обводкой.\n" +
+            "Color / Use object color — основной цвет.\n" +
+            "Spacing — расстояние между элементами.\n" +
+            "Padding — отступ первого кольца от границы объекта.\n" +
+            "Spread — толщина паттерна.\n" +
+            "Density — вероятность отрисовки (0.3-1.0).\n" +
+            "Falloff — закон затухания: linear / ease / step.\n" +
+            "No fade — отключает затухание.\n\n" +
+
+            "═══ ACCENT DOTS ═══\n" +
+            "Отдельный Element, Size, Stroke W, Color от micro.\n" +
+            "Every N-th — каждый N-й элемент кольца становится акцентом.\n" +
+            "Rings — на каких кольцах размещать (Inner/Middle/Outer).\n\n" +
 
             "═══ OUTPUT ═══\n" +
-            "• Pre-comp result — упаковать оба слоя точек в pre-comp.\n" +
-            "• Parent to source — привязать слои точек к источнику\n" +
-            "    (паттерн будет двигаться вместе с фигурой).\n\n" +
+            "Pre-comp result — упаковать в pre-comp.\n" +
+            "Parent to source — привязать к источнику.\n\n" +
 
             "═══ КНОПКИ ═══\n" +
-            "• Create Pattern — создать паттерн на основе выделенного слоя.\n" +
-            "• Re-generate Last — пересоздать с теми же параметрами\n" +
-            "    (новое случайное распределение density).\n\n" +
+            "Create Pattern — создать с текущими настройками.\n" +
+            "Re-generate Last — пересоздать с теми же параметрами.\n\n" +
 
-            "═══ РАБОЧИЙ ПРОЦЕСС ═══\n" +
-            "1. Создай фигуру или маску.\n" +
-            "2. Выдели её.\n" +
-            "3. Выбери MODE (или оставь Auto).\n" +
-            "4. Настрой параметры.\n" +
-            "5. Нажми Create Pattern.\n" +
-            "6. Создадутся два слоя: DotPattern_Micro и DotPattern_Accent.\n" +
-            "7. Источник можно скрыть/удалить.\n\n" +
+            "═══ ПРИМЕРЫ ═══\n" +
+            "Точки + крупные круги-акценты: micro=Dot, accent=Circle+plus.\n" +
+            "Технический фон: micro=Cross, accent=Concentric rings.\n" +
+            "LED-эффект: micro=Dot, accent=Dashed circle.\n" +
+            "Штрих-код вдоль пути: micro=Cross, Rotate to path=ON.\n\n" +
 
-            "═══ ЛИМИТЫ ═══\n" +
-            "Максимум " + MAX_DOTS + " точек на паттерн.\n" +
-            "При превышении — запрос подтверждения.\n\n" +
-
-            "═══ ИЗВЕСTНЫЕ ОГРАНИЧЕНИЯ ═══\n" +
-            "• Scale/Rotation слоя-источника не учитываются (только Position).\n" +
-            "• Color picker может вернуть -1 при отмене — цвет не меняется.\n" +
-            "• Для footage/text слоёв 'Use object color' возвращает дефолт.\n\n" +
-
-            "Версия: " + SCRIPT_VERSION + " | Архитектура v1.0.1 + Along Path";
+            "Версия: " + SCRIPT_VERSION + " | 10 element types";
     }
-
 
     buildUI(thisObj);
 
