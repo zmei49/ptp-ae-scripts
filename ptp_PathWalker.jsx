@@ -1046,28 +1046,51 @@
     }
 
     function getHelpText() {
-        return SCRIPT_NAME + " " + SCRIPT_VERSION + "\n" +
-            "Walk along a path: markers + drawn segments.\n\n" +
-            "USAGE:\n" +
-            "1. Select a layer with a Mask Path or a Shape Layer with a Path.\n" +
-            "2. Click ↻ to refresh.\n" +
-            "3. (If needed) Click 'Convert to Bezier Paths' for Rect/Ellipse/Star primitives.\n" +
-            "4. Pick the path and direction.\n" +
-            "5. Set 'Min vert dist' to avoid marker pile-up on rounded corners.\n" +
-            "6. Configure markers and trace.\n" +
-            "7. Set CTI to start time. Click 'Create Walker'.\n\n" +
-            "DIRECTION:\n" +
-            "• Vertex Order — uses raw vertex order.\n" +
-            "• CW / CCW — auto-reverses path if needed.\n\n" +
-            "MIN VERT DIST:\n" +
-            "• 0 = off. 15–30 px usually removes 'double markers' on rounded corners.\n\n" +
-            "ANIMATION:\n" +
-            "• Marker dur — pop-in time per vertex (up to 10s).\n" +
-            "• Segment dur — draw time per segment (up to 20s).\n" +
-            "• Loop — holds full trace, then resets at Cycle Length.\n\n" +
-            "Z-ORDER:\n" +
-            "• Markers are built before segments → render on top.\n";
-    }
+    return SCRIPT_NAME + " " + SCRIPT_VERSION + "\n" +
+        "Последовательное прохождение по пути: маркеры на вершинах + трасса между ними.\n\n" +
+        "БЫСТРЫЙ СТАРТ:\n" +
+        "1. Создай путь — маска на слое или Shape Layer с Path.\n" +
+        "2. Выдели этот слой.\n" +
+        "3. Поставь CTI на время старта анимации.\n" +
+        "4. Нажми Refresh — в дропдауне появятся найденные пути.\n" +
+        "5. Выбери путь, настрой параметры, нажми Create Walker.\n\n" +
+        "SOURCE PATH:\n" +
+        "• Refresh — пересканировать выбранный слой.\n" +
+        "• Convert to Bezier — конвертирует параметрические фигуры\n" +
+        "  (Rectangle, Ellipse, Star) в Bezier Path. Делать ДО Refresh.\n" +
+        "  Rounded Rectangle сохраняет скругления (8 вершин).\n" +
+        "• Direction — Vertex Order / CW / CCW.\n" +
+        "• Min vert dist — минимальное расстояние между маркерами в px.\n" +
+        "  0 = без фильтра. Полезно на скруглённых углах.\n" +
+        "• Merge mode:\n" +
+        "   - Centroid: маркер в центре кластера, сегменты прямыми.\n" +
+        "   - Smooth: маркер на пути, сегменты повторяют форму со скруглениями.\n\n" +
+        "MARKERS:\n" +
+        "• Show markers — вкл/выкл точки.\n" +
+        "• Type — Circle / Square / Triangle / Diamond.\n" +
+        "• Size, Stroke width, Color.\n\n" +
+        "TRACE:\n" +
+        "• Show trace — вкл/выкл соединительные сегменты.\n" +
+        "• Trace width, Color, Dash (пунктир).\n\n" +
+        "ANIMATION:\n" +
+        "• Marker duration — длительность появления маркера (fade-in + scale).\n" +
+        "• Segment duration — длительность отрисовки одного сегмента (Trim End).\n" +
+        "• Easing — Linear / Ease Out / Ease In-Out / Ease Out Back.\n" +
+        "• Loop — добавляет HOLD-ключи и loopOut('cycle').\n" +
+        "• Cycle length — длина цикла в секундах (если меньше длительности трассы,\n" +
+        "  скрипт сам подвинет на lastActiveTime + 0.5 с).\n\n" +
+        "Z-ORDER:\n" +
+        "• Маркеры создаются ПЕРЕД сегментами, поэтому всегда сверху.\n\n" +
+        "СОЗДАВАЕМЫЕ СЛОИ:\n" +
+        "• " + LAYER_PREFIX + "<source> — один shape-слой с Contents:\n" +
+        "   Marker_1..N (сверху), Segment_1..M (снизу).\n\n" +
+        "СОВЕТЫ:\n" +
+        "• Если маркеры скапливаются на скруглениях — Min vert dist = 40-60.\n" +
+        "• Параметрический Ellipse/Rect сначала Convert to Bezier, потом Refresh.\n" +
+        "• Для GPS-трека маски: Direction = Vertex Order.\n" +
+        "• Undo откатывает создание целиком.";
+}
+
 
     buildUI(thisObj);
 
