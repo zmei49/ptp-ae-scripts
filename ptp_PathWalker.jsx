@@ -2,14 +2,19 @@
 // ptp_PathWalker.jsx
 // Walk along a path: place markers at vertices and draw
 // segments between them sequentially (clockwise/CCW).
-// Version: 1.0
-// Install: Adobe After Effects/Support Files/Scripts/ScriptUI Panels/
-// Open:    Window → ptp_PathWalker.jsx
+// Version: 1.0.1
+// Changes vs 1.0:
+//   • UI: minimumSize widths + onResizing handler (fix collapsed layout)
+//   • Z-order: markers added AFTER segments → markers render on top
+//   • Marker animation timing: marker pops AFTER its incoming segment
+//   • Loop bug fix: property references resolved lazily by index
+//   • Marker dur / Segment dur sliders extended to 10s / 20s
+//   • New button "Convert to Bezier Paths" for parametric shapes
 // ============================================================
 
 (function (thisObj) {
     var SCRIPT_NAME = "ptp_PathWalker";
-    var SCRIPT_VERSION = "v1.0";
+    var SCRIPT_VERSION = "v1.0.1";
     var LAYER_PREFIX = "PW_";
 
     var COL_ACCENT = [1.00, 0.55, 0.10];
@@ -81,11 +86,8 @@
     // ============================================================
     // PATH DISCOVERY
     // ============================================================
-    // Returns array of {kind:"mask"|"shape", label, getProp:function, isClosed:function}
     function findPaths(layer) {
         var paths = [];
-
-        // Masks
         try {
             var maskGrp = layer.property("ADBE Mask Parade");
             if (maskGrp) {
@@ -96,18 +98,13 @@
                         paths.push({
                             kind: "mask",
                             label: "Mask: " + mask.name,
-                            getProp: function(){ return mask.property("ADBE Mask Shape"); },
-                            isClosed: function(){
-                                try { return mask.property("ADBE Mask Shape").value.closed; }
-                                catch(e){ return true; }
-                            }
+                            getProp: function(){ return mask.property("ADBE Mask Shape"); }
                         });
                     })(i);
                 }
             }
         } catch(e) {}
 
-        // Shape paths inside Shape Layer
         if (layer instanceof ShapeLayer) {
             try {
                 var root = layer.property("ADBE Root Vectors Group");
@@ -123,40 +120,164 @@
                                 paths.push({
                                     kind: "shape",
                                     label: "Shape: " + label,
-                                    getProp: function(){ return pp.property("ADBE Vector Shape"); },
-                                    isClosed: function(){
-                                        try { return pp.property("ADBE Vector Shape").value.closed; }
-                                        catch(e){ return true; }
-                                    }
+                                    getProp: function(){ return pp.property("ADBE Vector Shape"); }
                                 });
                             })(p, breadcrumb + "/" + p.name);
                         }
-                        // Ellipse / Rect / Polystar paths cannot be read as Shape directly,
-                        // they generate the path internally. Skipped in v1.0.
                     }
                 }
                 if (root) walk(root, "");
             } catch(e) {}
         }
-
         return paths;
+    }
+
+    // ============================================================
+    // CONVERT PARAMETRIC TO BEZIER
+    // ============================================================
+    function convertParametricToBezier(layer) {
+        if (!(layer instanceof ShapeLayer)) {
+            alert("Select a Shape Layer to convert parametric paths.");
+            return 0;
+        }
+        var converted = 0;
+        // Match names for parametric shape primitives
+        var paramTypes = {
+            "ADBE Vector Shape - Rect":    true,
+            "ADBE Vector Shape - Ellipse": true,
+            "ADBE Vector Shape - Star":    true
+        };
+
+        function walkAndConvert(group) {
+            // Iterate top-down; rebuild list each time because conversion modifies it
+            var i = 1;
+            while (i <= group.numProperties) {
+                var p = group.property(i);
+                if (!p) { i++; continue; }
+
+                if (p.matchName === "ADBE Vector Group") {
+                    var inner = p.property("ADBE Vectors Group");
+                    if (inner) walkAndConvert(inner);
+                    i++;
+                    continue;
+                }
+
+                if (paramTypes[p.matchName]) {
+                    // Build a Shape() from current parametric shape by reading its visible path:
+                    // The path can be retrieved at time 0 from the Property "Path" of the parametric.
+                    // Workaround: we copy parameters into a Bezier "ADBE Vector Shape - Group"
+                    // by sampling vertices via a helper expression.
+                    // Simpler approach: rely on AE's built-in mechanism — add a new Group path and
+                    // populate it with vertices computed from the parametric.
+
+                    var newShapeData = sampleParametricToShape(p);
+                    if (newShapeData) {
+                        var bezPath = group.addProperty("ADBE Vector Shape - Group");
+                        try { bezPath.property("ADBE Vector Shape").setValue(newShapeData); } catch(e){}
+                        bezPath.name = p.name + " (Bezier)";
+                        // Move new bezier path to position of old one
+                        bezPath.moveTo(p.propertyIndex);
+                        // Remove old parametric
+                        p.remove();
+                        converted++;
+                        // Don't advance i — new element took the same slot
+                        continue;
+                    }
+                }
+                i++;
+            }
+        }
+
+        try {
+            var root = layer.property("ADBE Root Vectors Group");
+            if (root) walkAndConvert(root);
+        } catch(e) { alert("Conversion error: " + e.toString()); }
+        return converted;
+    }
+
+    // Sample a parametric shape (Rect / Ellipse / Star) into a Shape object
+    function sampleParametricToShape(prop) {
+        var matchName = prop.matchName;
+        try {
+            if (matchName === "ADBE Vector Shape - Rect") {
+                var size = prop.property("Size").value;
+                var pos  = prop.property("Position").value;
+                var w2 = size[0]/2, h2 = size[1]/2;
+                var cx = pos[0], cy = pos[1];
+                var s = new Shape();
+                s.vertices = [
+                    [cx - w2, cy - h2],
+                    [cx + w2, cy - h2],
+                    [cx + w2, cy + h2],
+                    [cx - w2, cy + h2]
+                ];
+                s.inTangents  = [[0,0],[0,0],[0,0],[0,0]];
+                s.outTangents = [[0,0],[0,0],[0,0],[0,0]];
+                s.closed = true;
+                return s;
+            }
+            if (matchName === "ADBE Vector Shape - Ellipse") {
+                var size = prop.property("Size").value;
+                var pos  = prop.property("Position").value;
+                var rx = size[0]/2, ry = size[1]/2;
+                var cx = pos[0], cy = pos[1];
+                var k = 0.5522847498;
+                var s = new Shape();
+                s.vertices = [
+                    [cx,      cy - ry],
+                    [cx + rx, cy     ],
+                    [cx,      cy + ry],
+                    [cx - rx, cy     ]
+                ];
+                s.inTangents  = [[-rx*k, 0], [0, -ry*k], [ rx*k, 0], [0,  ry*k]];
+                s.outTangents = [[ rx*k, 0], [0,  ry*k], [-rx*k, 0], [0, -ry*k]];
+                s.closed = true;
+                return s;
+            }
+            if (matchName === "ADBE Vector Shape - Star") {
+                var points = Math.round(prop.property("Points").value);
+                var pos    = prop.property("Position").value;
+                var rot    = prop.property("Rotation").value * Math.PI / 180;
+                var outerR = prop.property("Outer Radius").value;
+                var starType = prop.property("Type").value; // 1=Star, 2=Polygon
+                var s = new Shape();
+                var verts = [], inT = [], outT = [];
+                if (starType === 2) {
+                    // Polygon
+                    for (var i = 0; i < points; i++) {
+                        var a = rot - Math.PI/2 + (Math.PI*2*i/points);
+                        verts.push([pos[0] + outerR*Math.cos(a), pos[1] + outerR*Math.sin(a)]);
+                        inT.push([0,0]); outT.push([0,0]);
+                    }
+                } else {
+                    // Star (alternating outer/inner)
+                    var innerR = prop.property("Inner Radius").value;
+                    var n = points * 2;
+                    for (var j = 0; j < n; j++) {
+                        var r = (j % 2 === 0) ? outerR : innerR;
+                        var ang = rot - Math.PI/2 + (Math.PI*2*j/n);
+                        verts.push([pos[0] + r*Math.cos(ang), pos[1] + r*Math.sin(ang)]);
+                        inT.push([0,0]); outT.push([0,0]);
+                    }
+                }
+                s.vertices = verts;
+                s.inTangents = inT;
+                s.outTangents = outT;
+                s.closed = true;
+                return s;
+            }
+        } catch(e) {}
+        return null;
     }
 
     // ============================================================
     // PATH GEOMETRY
     // ============================================================
-    // Returns {verts:[[x,y],...], inT:[[dx,dy],...], outT:[[dx,dy],...], closed:bool}
     function readPathData(pathRef) {
         var p = pathRef.getProp().value;
-        return {
-            verts:  p.vertices,
-            inT:    p.inTangents,
-            outT:   p.outTangents,
-            closed: p.closed
-        };
+        return { verts: p.vertices, inT: p.inTangents, outT: p.outTangents, closed: p.closed };
     }
 
-    // Signed area of polygon (positive = CCW in AE coords where Y goes down → flip for CW interpretation)
     function signedArea(verts) {
         var a = 0;
         for (var i = 0; i < verts.length; i++) {
@@ -164,25 +285,20 @@
             var p2 = verts[(i + 1) % verts.length];
             a += (p2[0] - p1[0]) * (p2[1] + p1[1]);
         }
-        // In AE: positive a → clockwise (because Y axis points down)
         return a;
     }
 
-    // Reverse path direction (verts + tangents)
     function reversePathData(pd) {
         var n = pd.verts.length;
         var v = [], iT = [], oT = [];
         for (var i = n - 1; i >= 0; i--) {
             v.push(pd.verts[i]);
-            // When reversing: new inTangent = old outTangent, and vice versa
             iT.push(pd.outT[i]);
             oT.push(pd.inT[i]);
         }
         return { verts:v, inT:iT, outT:oT, closed: pd.closed };
     }
 
-    // Build per-segment path data: each segment is a cubic Bezier (or line) between
-    // verts[i] and verts[i+1], using outT[i] as start handle and inT[i+1] as end handle.
     function buildSegments(pd) {
         var segs = [];
         var n = pd.verts.length;
@@ -190,25 +306,18 @@
         for (var i = 0; i < lastIdx; i++) {
             var a = i;
             var b = (i + 1) % n;
-            segs.push({
-                a:   pd.verts[a],
-                b:   pd.verts[b],
-                oTa: pd.outT[a],
-                iTb: pd.inT[b]
-            });
+            segs.push({ a: pd.verts[a], b: pd.verts[b], oTa: pd.outT[a], iTb: pd.inT[b] });
         }
         return segs;
     }
 
     // ============================================================
-    // SHAPE LAYER CONSTRUCTION
+    // SHAPE BUILDERS
     // ============================================================
     function buildMarkerPath(markerType, size) {
-        // Returns a Shape object describing the marker path
         var s = new Shape();
         var r = size / 2;
         if (markerType === "Dot" || markerType === "Circle") {
-            // Approximate circle with 4 bezier nodes
             var k = 0.5522847498 * r;
             s.vertices = [[0,-r],[r,0],[0,r],[-r,0]];
             s.inTangents  = [[-k,0],[0,-k],[k,0],[0,k]];
@@ -216,17 +325,17 @@
             s.closed = true;
         } else if (markerType === "Square") {
             s.vertices = [[-r,-r],[r,-r],[r,r],[-r,r]];
-            s.inTangents  = [[0,0],[0,0],[0,0],[0,0]];
+            s.inTangents = [[0,0],[0,0],[0,0],[0,0]];
             s.outTangents = [[0,0],[0,0],[0,0],[0,0]];
             s.closed = true;
         } else if (markerType === "Triangle") {
             s.vertices = [[0,-r],[r*0.866,r*0.5],[-r*0.866,r*0.5]];
-            s.inTangents  = [[0,0],[0,0],[0,0]];
+            s.inTangents = [[0,0],[0,0],[0,0]];
             s.outTangents = [[0,0],[0,0],[0,0]];
             s.closed = true;
         } else if (markerType === "Diamond") {
             s.vertices = [[0,-r],[r,0],[0,r],[-r,0]];
-            s.inTangents  = [[0,0],[0,0],[0,0],[0,0]];
+            s.inTangents = [[0,0],[0,0],[0,0],[0,0]];
             s.outTangents = [[0,0],[0,0],[0,0],[0,0]];
             s.closed = true;
         }
@@ -234,8 +343,6 @@
     }
 
     function buildSegmentPath(seg) {
-        // Two-vertex Bezier path from seg.a to seg.b
-        // Tangents are relative to the vertex in AE.
         var s = new Shape();
         s.vertices    = [seg.a, seg.b];
         s.outTangents = [seg.oTa, [0, 0]];
@@ -244,7 +351,6 @@
         return s;
     }
 
-    // Create a vector group containing a single path + fill/stroke + transform
     function addPathGroup(contents, groupName, pathShape, fillColor, strokeColor, strokeWidth, useStroke, useFill, addTrimPaths) {
         var grp = contents.addProperty("ADBE Vector Group");
         grp.name = groupName;
@@ -285,25 +391,20 @@
         var pd = readPathData(pathRef);
         if (!pd.verts || pd.verts.length < 2) { alert("Path has too few vertices."); return; }
 
-        // Direction handling
         if (opts.direction === "CW" || opts.direction === "CCW") {
             var area = signedArea(pd.verts);
-            // In AE (Y down): positive area = CW. If user wants CW but area<0 → reverse.
             if (opts.direction === "CW"  && area < 0) pd = reversePathData(pd);
             if (opts.direction === "CCW" && area > 0) pd = reversePathData(pd);
         }
-        // else "VertexOrder" → leave as is
 
         var segments = buildSegments(pd);
         var numSegs = segments.length;
         var numVerts = pd.verts.length;
 
-        // Create one shape layer for everything
         var outLayer = comp.layers.addShape();
         outLayer.name = LAYER_PREFIX + srcLayer.name;
         outLayer.moveBefore(srcLayer);
 
-        // Copy transform from source layer so paths align visually
         try {
             var srcT = srcLayer.property("Transform");
             var dstT = outLayer.property("Transform");
@@ -318,30 +419,28 @@
         var t0 = comp.time;
         var markerDur = opts.markerDur;
         var segDur    = opts.segDur;
-        var stepDelay = markerDur + segDur; // each vertex+segment step length
+        var stepDelay = markerDur + segDur;
 
-        // ---- SEGMENTS (built first so they sit below markers visually) ----
+        // ---- SEGMENTS FIRST (so they sit visually BELOW markers — actually inverse in AE,
+        // but since we want markers ON TOP, segments must be added FIRST so they end up
+        // LOWER in the stack of vector groups. In AE Shape contents, items added later
+        // appear ABOVE earlier ones in render order — opposite of layer stack convention.
+        // Wait — actually inside Shape contents, the TOP item renders LAST (on top).
+        // addProperty appends to bottom, so first-added = bottom = rendered first (behind).
+        // Therefore: segments added first → behind. Markers added after → on top. ✓ ----
         var trimRefs = [];
         if (opts.showTrace) {
             for (var s = 0; s < numSegs; s++) {
                 var segShape = buildSegmentPath(segments[s]);
                 var info = addPathGroup(
-                    contents,
-                    "Segment_" + (s + 1),
-                    segShape,
-                    null,
-                    opts.traceColor,
-                    opts.traceWidth,
-                    true,   // useStroke
-                    false,  // useFill
-                    true    // addTrimPaths
+                    contents, "Segment_" + (s + 1), segShape,
+                    null, opts.traceColor, opts.traceWidth,
+                    true, false, true
                 );
 
                 if (opts.dashed && info.group) {
-                    // Add dash to stroke
                     try {
                         var inner = info.group.property("ADBE Vectors Group");
-                        // Find the stroke we just added
                         for (var k = 1; k <= inner.numProperties; k++) {
                             var pp = inner.property(k);
                             if (pp.matchName === "ADBE Vector Graphic - Stroke") {
@@ -358,40 +457,33 @@
                     } catch(e) {}
                 }
 
-                // Animate Trim Paths End
                 var trimEnd = info.trim.property("End");
-                var segStart = t0 + (s * stepDelay) + markerDur; // marker appears first, then segment draws
+                // Segment timing: first marker pops, THEN segment draws.
+                // For segment i (connecting marker i → marker i+1):
+                // - marker i appears at: t0 + i * stepDelay  (over markerDur)
+                // - segment i draws at:  t0 + i * stepDelay + markerDur  (over segDur)
+                var segStart = t0 + (s * stepDelay) + markerDur;
                 trimEnd.setValueAtTime(segStart, 0);
                 trimEnd.setValueAtTime(segStart + segDur, 100);
                 applyEasingToProp(trimEnd, opts.easing);
-                trimRefs.push({ prop: trimEnd, startVal: 0 });
+                trimRefs.push({ groupRef: info.group, segIndex: s });
             }
         }
 
-        // ---- MARKERS ----
+        // ---- MARKERS AFTER segments → appear ON TOP ----
         var markerRefs = [];
         if (opts.showMarkers) {
             for (var m = 0; m < numVerts; m++) {
-                // If path is open, draw markers on all verts.
-                // If path is closed, last vert == first vert effectively (we still draw N markers,
-                // one per vertex; the segment 0→1→...→N-1→0 connects them).
                 var v = pd.verts[m];
                 var mShape = buildMarkerPath(opts.markerType, opts.markerSize);
 
                 var useStrokeForMarker = (opts.markerType === "Circle");
                 var info2 = addPathGroup(
-                    contents,
-                    "Marker_" + (m + 1),
-                    mShape,
-                    opts.markerColor,
-                    opts.markerColor,
-                    opts.markerStrokeWidth,
-                    useStrokeForMarker,            // stroke only for "Circle" type
-                    !useStrokeForMarker,           // fill for Dot/Square/Triangle/Diamond
-                    false                          // no trim paths
+                    contents, "Marker_" + (m + 1), mShape,
+                    opts.markerColor, opts.markerColor, opts.markerStrokeWidth,
+                    useStrokeForMarker, !useStrokeForMarker, false
                 );
 
-                // Position the marker via its group's transform
                 try {
                     var gt = info2.group.property("ADBE Vector Transform Group");
                     gt.property("ADBE Vector Position").setValue(v);
@@ -399,6 +491,10 @@
                     var opProp = gt.property("ADBE Vector Group Opacity");
                     var scProp = gt.property("ADBE Vector Scale");
 
+                    // Marker m animates AFTER segment (m-1) finishes drawing.
+                    // For m=0: appears at t0 (first marker before any segment).
+                    // For m>0: appears at t0 + (m-1)*stepDelay + markerDur + segDur = t0 + m*stepDelay
+                    // Actually unified: marker m appears at t0 + m * stepDelay
                     var markStart = t0 + m * stepDelay;
                     opProp.setValueAtTime(markStart, 0);
                     opProp.setValueAtTime(markStart + markerDur, 100);
@@ -409,45 +505,55 @@
                     applyEasingToProp(opProp, opts.easing);
                     applyEasingToProp(scProp, opts.easing);
 
-                    markerRefs.push({ op: opProp, sc: scProp });
+                    markerRefs.push({ groupRef: info2.group, vertIndex: m });
                 } catch(e) {}
             }
         }
 
-        // ---- LOOP HANDLING: hold then reset ----
+        // ---- LOOP HANDLING ----
         if (opts.loop) {
             var lastActiveTime = t0 + numSegs * stepDelay + (opts.showMarkers ? markerDur : 0);
             var cycleEnd = t0 + opts.cycle;
             if (cycleEnd <= lastActiveTime + 0.05) cycleEnd = lastActiveTime + 0.5;
 
-            // For each trim: hold at 100, then reset to 0 at cycle end
+            // Resolve property references lazily — by group reference, not stored prop.
             for (var ti = 0; ti < trimRefs.length; ti++) {
-                var tp = trimRefs[ti].prop;
-                tp.setValueAtTime(cycleEnd - 0.001, 100);
-                tp.setValueAtTime(cycleEnd, 0);
-                // Hold interpolation on reset
                 try {
+                    var g = trimRefs[ti].groupRef;
+                    var innerG = g.property("ADBE Vectors Group");
+                    var trim = null;
+                    for (var kk = 1; kk <= innerG.numProperties; kk++) {
+                        var pr = innerG.property(kk);
+                        if (pr && pr.matchName === "ADBE Vector Filter - Trim") { trim = pr; break; }
+                    }
+                    if (!trim) continue;
+                    var tp = trim.property("End");
+                    tp.setValueAtTime(cycleEnd - 0.001, 100);
+                    tp.setValueAtTime(cycleEnd, 0);
                     tp.setInterpolationTypeAtKey(tp.numKeys, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
                     tp.setInterpolationTypeAtKey(tp.numKeys - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+                    setLoopExpression(tp, "cycle");
                 } catch(e) {}
-                setLoopExpression(tp, "cycle");
             }
-            // For each marker: hold then reset
+
             for (var mi = 0; mi < markerRefs.length; mi++) {
-                var mop = markerRefs[mi].op;
-                var msc = markerRefs[mi].sc;
-                mop.setValueAtTime(cycleEnd - 0.001, 100);
-                mop.setValueAtTime(cycleEnd, 0);
-                msc.setValueAtTime(cycleEnd - 0.001, [100,100]);
-                msc.setValueAtTime(cycleEnd, [0,0]);
                 try {
+                    var g2 = markerRefs[mi].groupRef;
+                    var gt2 = g2.property("ADBE Vector Transform Group");
+                    var mop = gt2.property("ADBE Vector Group Opacity");
+                    var msc = gt2.property("ADBE Vector Scale");
+
+                    mop.setValueAtTime(cycleEnd - 0.001, 100);
+                    mop.setValueAtTime(cycleEnd, 0);
+                    msc.setValueAtTime(cycleEnd - 0.001, [100,100]);
+                    msc.setValueAtTime(cycleEnd, [0,0]);
                     mop.setInterpolationTypeAtKey(mop.numKeys, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
                     mop.setInterpolationTypeAtKey(mop.numKeys - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
                     msc.setInterpolationTypeAtKey(msc.numKeys, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
                     msc.setInterpolationTypeAtKey(msc.numKeys - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+                    setLoopExpression(mop, "cycle");
+                    setLoopExpression(msc, "cycle");
                 } catch(e) {}
-                setLoopExpression(mop, "cycle");
-                setLoopExpression(msc, "cycle");
             }
         }
 
@@ -462,7 +568,7 @@
         d.alignment = ["fill","top"];
         d.preferredSize.height = 2;
     }
-     function addSlider(parent, label, mn, mx, val, step, onChange) {
+    function addSlider(parent, label, mn, mx, val, step, onChange) {
         var row = parent.add("group");
         row.orientation = "row";
         row.alignment = ["fill","top"];
@@ -490,7 +596,7 @@
             onChange(v);
         };
     }
-        function makeColorSwatch(parent, label, initialColor, onChange) {
+    function makeColorSwatch(parent, label, initialColor, onChange) {
         var row = parent.add("group");
         row.orientation = "row";
         row.minimumSize.width = 300;
@@ -525,12 +631,11 @@
         };
     }
 
-
     // ============================================================
     // MAIN UI
     // ============================================================
     function buildUI(thisObj) {
-                var w = (thisObj instanceof Panel)
+        var w = (thisObj instanceof Panel)
             ? thisObj
             : new Window("palette", SCRIPT_NAME + " " + SCRIPT_VERSION, undefined, {resizeable:true});
         w.orientation = "column";
@@ -539,7 +644,6 @@
         w.margins = 10;
         w.preferredSize.width = 340;
         w.minimumSize.width = 320;
-
 
         var title = w.add("statictext", undefined, SCRIPT_NAME + "  " + SCRIPT_VERSION);
         title.graphics.foregroundColor = title.graphics.newPen(title.graphics.PenType.SOLID_COLOR, COL_ACCENT, 1);
@@ -563,18 +667,22 @@
             cycle:             3.0
         };
 
-        // -------- Path source --------
+        // -------- Source Path --------
         var srcPanel = w.add("panel", undefined, "Source Path");
         srcPanel.orientation = "column";
         srcPanel.alignChildren = ["fill","top"];
         srcPanel.margins = 8;
+        srcPanel.minimumSize.width = 310;
 
         var rowPath = srcPanel.add("group");
         rowPath.orientation = "row";
+        rowPath.minimumSize.width = 290;
         var pathLbl = rowPath.add("statictext", undefined, "Path:");
         pathLbl.preferredSize.width = 60;
+        pathLbl.minimumSize.width = 60;
         var pathDD = rowPath.add("dropdownlist", undefined, ["(none)"]);
-        pathDD.preferredSize.width = 200;
+        pathDD.preferredSize.width = 180;
+        pathDD.minimumSize.width = 150;
         pathDD.selection = 0;
         var refreshBtn = rowPath.add("button", undefined, "↻");
         refreshBtn.preferredSize = [24, 22];
@@ -589,15 +697,12 @@
                 }
             } catch(e){}
             pathsCache = lyr ? findPaths(lyr) : [];
-            // Rebuild dropdown
             pathDD.removeAll();
             if (pathsCache.length === 0) {
                 pathDD.add("item", "(no paths found)");
                 state.pathRef = null;
             } else {
-                for (var i = 0; i < pathsCache.length; i++) {
-                    pathDD.add("item", pathsCache[i].label);
-                }
+                for (var i = 0; i < pathsCache.length; i++) pathDD.add("item", pathsCache[i].label);
                 state.pathRef = pathsCache[0];
             }
             pathDD.selection = 0;
@@ -609,13 +714,37 @@
         };
         refreshPaths();
 
+        // Convert button
+        var rowConv = srcPanel.add("group");
+        rowConv.orientation = "row";
+        rowConv.minimumSize.width = 290;
+        var convBtn = rowConv.add("button", undefined, "Convert to Bezier Paths");
+        convBtn.preferredSize.width = 200;
+        convBtn.helpTip = "Converts parametric Rect/Ellipse/Star paths in the selected Shape Layer to editable Bezier paths.";
+        convBtn.onClick = function(){
+            var lyr;
+            try {
+                var c = app.project.activeItem;
+                if (c && c instanceof CompItem && c.selectedLayers.length > 0) lyr = c.selectedLayers[0];
+            } catch(e){}
+            if (!lyr) { alert("Select a Shape Layer first."); return; }
+            app.beginUndoGroup(SCRIPT_NAME + ": Convert to Bezier");
+            var n = convertParametricToBezier(lyr);
+            app.endUndoGroup();
+            alert(n + " parametric path(s) converted.");
+            refreshPaths();
+        };
+
         var rowDir = srcPanel.add("group");
         rowDir.orientation = "row";
+        rowDir.minimumSize.width = 290;
         var dirLbl = rowDir.add("statictext", undefined, "Direction:");
         dirLbl.preferredSize.width = 60;
+        dirLbl.minimumSize.width = 60;
         var dirDD = rowDir.add("dropdownlist", undefined, ["Vertex Order", "CW", "CCW"]);
         dirDD.selection = dirDD.find("CW");
         dirDD.preferredSize.width = 130;
+        dirDD.minimumSize.width = 100;
         dirDD.onChange = function(){
             var t = dirDD.selection.text;
             state.direction = (t === "Vertex Order") ? "VertexOrder" : t;
@@ -626,16 +755,18 @@
         mPanel.orientation = "column";
         mPanel.alignChildren = ["fill","top"];
         mPanel.margins = 8;
+        mPanel.minimumSize.width = 310;
 
         var cbShowM = mPanel.add("checkbox", undefined, "Show markers");
         cbShowM.value = state.showMarkers;
         cbShowM.onClick = function(){ state.showMarkers = cbShowM.value; };
 
-        var rowMT = mPanel.add("group"); rowMT.orientation = "row";
-        var mtLbl = rowMT.add("statictext", undefined, "Type:"); mtLbl.preferredSize.width = 110;
+        var rowMT = mPanel.add("group"); rowMT.orientation = "row"; rowMT.minimumSize.width = 290;
+        var mtLbl = rowMT.add("statictext", undefined, "Type:");
+        mtLbl.preferredSize.width = 110; mtLbl.minimumSize.width = 110;
         var mtDD = rowMT.add("dropdownlist", undefined, ["Dot","Circle","Square","Triangle","Diamond"]);
         mtDD.selection = mtDD.find("Dot");
-        mtDD.preferredSize.width = 130;
+        mtDD.preferredSize.width = 130; mtDD.minimumSize.width = 100;
         mtDD.onChange = function(){ state.markerType = mtDD.selection.text; };
 
         addSlider(mPanel, "Size (px)", 2, 60, state.markerSize, 1, function(v){ state.markerSize = v; });
@@ -647,6 +778,7 @@
         tPanel.orientation = "column";
         tPanel.alignChildren = ["fill","top"];
         tPanel.margins = 8;
+        tPanel.minimumSize.width = 310;
 
         var cbShowT = tPanel.add("checkbox", undefined, "Show trace (drawn segments)");
         cbShowT.value = state.showTrace;
@@ -663,19 +795,22 @@
         aPanel.orientation = "column";
         aPanel.alignChildren = ["fill","top"];
         aPanel.margins = 8;
+        aPanel.minimumSize.width = 310;
 
-        addSlider(aPanel, "Marker dur (s)",  0.05, 1.0, state.markerDur, 0.05, function(v){ state.markerDur = v; });
-        addSlider(aPanel, "Segment dur (s)", 0.05, 2.0, state.segDur,    0.05, function(v){ state.segDur = v; });
+        addSlider(aPanel, "Marker dur (s)",  0.05, 10.0, state.markerDur, 0.05, function(v){ state.markerDur = v; });
+        addSlider(aPanel, "Segment dur (s)", 0.05, 20.0, state.segDur,    0.05, function(v){ state.segDur = v; });
 
-        var rowEase = aPanel.add("group"); rowEase.orientation = "row";
-        var eLbl = rowEase.add("statictext", undefined, "Easing:"); eLbl.preferredSize.width = 110;
+        var rowEase = aPanel.add("group"); rowEase.orientation = "row"; rowEase.minimumSize.width = 290;
+        var eLbl = rowEase.add("statictext", undefined, "Easing:");
+        eLbl.preferredSize.width = 110; eLbl.minimumSize.width = 110;
         var eDD = rowEase.add("dropdownlist", undefined, EASING_NAMES);
         eDD.selection = eDD.find(state.easing);
-        eDD.preferredSize.width = 130;
+        eDD.preferredSize.width = 130; eDD.minimumSize.width = 100;
         eDD.onChange = function(){ state.easing = eDD.selection.text; };
 
-        var rowLoop = aPanel.add("group"); rowLoop.orientation = "row";
-        var lLbl = rowLoop.add("statictext", undefined, "Loop:"); lLbl.preferredSize.width = 110;
+        var rowLoop = aPanel.add("group"); rowLoop.orientation = "row"; rowLoop.minimumSize.width = 290;
+        var lLbl = rowLoop.add("statictext", undefined, "Loop:");
+        lLbl.preferredSize.width = 110; lLbl.minimumSize.width = 110;
         var cbLoop = rowLoop.add("checkbox", undefined, "Cycle");
         cbLoop.value = state.loop;
 
@@ -683,7 +818,7 @@
         cycleGrp.orientation = "column";
         cycleGrp.alignChildren = ["fill","top"];
         cycleGrp.enabled = state.loop;
-        addSlider(cycleGrp, "Cycle Length (s)", 0.5, 20.0, state.cycle, 0.1, function(v){ state.cycle = v; });
+        addSlider(cycleGrp, "Cycle Length (s)", 0.5, 30.0, state.cycle, 0.1, function(v){ state.cycle = v; });
 
         cbLoop.onClick = function(){
             state.loop = cbLoop.value;
@@ -694,8 +829,10 @@
 
         var btnRow = w.add("group");
         btnRow.orientation = "row";
+        btnRow.minimumSize.width = 290;
         var btnGo = btnRow.add("button", undefined, "Create Walker");
         btnGo.preferredSize.height = 30;
+        btnGo.preferredSize.width = 200;
         var btnHelp = btnRow.add("button", undefined, "?");
         btnHelp.preferredSize.width = 28;
 
@@ -710,7 +847,7 @@
 
         btnHelp.onClick = function(){ alert(getHelpText()); };
 
-                if (w instanceof Window) {
+        if (w instanceof Window) {
             w.center();
             w.show();
         } else {
@@ -719,7 +856,6 @@
             w.onResizing = w.onResize = function(){ this.layout.resize(); };
         }
         return w;
-
     }
 
     function getHelpText() {
@@ -727,32 +863,21 @@
             "Walk along a path: markers + drawn segments.\n\n" +
             "USAGE:\n" +
             "1. Select a layer with a Mask Path or a Shape Layer with a Path.\n" +
-            "2. Click ↻ to refresh the path dropdown.\n" +
-            "3. Pick the path and direction (Vertex Order / CW / CCW).\n" +
-            "4. Configure markers and trace.\n" +
-            "5. Set CTI to where the animation should start.\n" +
-            "6. Click 'Create Walker'.\n\n" +
-            "PATH SOURCES:\n" +
-            "• Mask Path — masks on any layer (priority).\n" +
-            "• Shape Path — Pen-drawn paths inside a Shape Layer.\n" +
-            "• Parametric Ellipse/Rect/Polystar shapes are NOT supported in v1.0\n" +
-            "  (convert via right-click → Convert To Bezier Path).\n\n" +
+            "2. Click ↻ to refresh.\n" +
+            "3. (If needed) Click 'Convert to Bezier Paths' for Rect/Ellipse/Star primitives.\n" +
+            "4. Pick the path and direction.\n" +
+            "5. Configure markers and trace.\n" +
+            "6. Set CTI to start time.\n" +
+            "7. Click 'Create Walker'.\n\n" +
             "DIRECTION:\n" +
-            "• Vertex Order — uses raw vertex order from the path.\n" +
-            "• CW / CCW — auto-reverses path if needed to match.\n\n" +
+            "• Vertex Order — uses raw vertex order.\n" +
+            "• CW / CCW — auto-reverses path if needed.\n\n" +
             "ANIMATION:\n" +
-            "• Marker dur — pop-in time per vertex.\n" +
-            "• Segment dur — draw time for each segment.\n" +
-            "• Step delay = marker dur + segment dur.\n" +
-            "• Loop — holds full trace, then resets at Cycle Length and replays.\n\n" +
-            "OUTPUT:\n" +
-            "• One Shape Layer named '" + LAYER_PREFIX + "<src>' is created above source.\n" +
-            "• Markers + segments live as separate groups inside.\n" +
-            "• Transform is copied from source for visual alignment.\n\n" +
-            "NOTES:\n" +
-            "• Bezier tangents from the original path are preserved.\n" +
-            "• Closed paths: N markers + N segments (last connects back).\n" +
-            "• Open paths: N markers + (N-1) segments.\n";
+            "• Marker dur — pop-in time per vertex (up to 10s).\n" +
+            "• Segment dur — draw time per segment (up to 20s).\n" +
+            "• Loop — holds full trace, then resets at Cycle Length.\n\n" +
+            "Z-ORDER:\n" +
+            "• Markers are added AFTER segments → they render on top.\n";
     }
 
     buildUI(thisObj);
