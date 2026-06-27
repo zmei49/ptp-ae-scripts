@@ -415,10 +415,24 @@
         var pd = readPathData(pathRef);
         if (!pd.verts || pd.verts.length < 2) { alert("Path has too few vertices."); return; }
 
-        if (opts.direction === "CW" || opts.direction === "CCW") {
+                if (opts.direction === "CW" || opts.direction === "CCW") {
             var area = signedArea(pd.verts);
             if (opts.direction === "CW"  && area < 0) pd = reversePathData(pd);
             if (opts.direction === "CCW" && area > 0) pd = reversePathData(pd);
+        }
+
+        // === FILTER CLOSE VERTICES ===
+        var filterDbg = [];
+        if (opts.minVertexDist && opts.minVertexDist > 0) {
+            pd = filterCloseVertices(pd, opts.minVertexDist, filterDbg);
+            if (!pd.verts || pd.verts.length < 2) {
+                alert("After filtering only " + (pd.verts ? pd.verts.length : 0) +
+                      " vertices left.\nReduce 'Min Vertex Distance'.\n\n" +
+                      filterDbg.join("\n"));
+                return;
+            }
+            // Раскомментируй строку ниже, если нужно увидеть отчёт фильтра:
+            // alert("Filter report:\n" + filterDbg.join("\n"));
         }
 
         var segments = buildSegments(pd);
@@ -811,6 +825,10 @@
         addSlider(mPanel, "Size (px)", 2, 60, state.markerSize, 1, function(v){ state.markerSize = v; });
         addSlider(mPanel, "Stroke W (Circle)", 1, 10, state.markerStrokeWidth, 1, function(v){ state.markerStrokeWidth = v; });
         makeColorSwatch(mPanel, "Color", state.markerColor, function(c){ state.markerColor = c; });
+
+        // === MIN VERTEX DISTANCE ===
+        var sliMinDist = addSlider(w, "Min Vertex Distance (px):", 0, 200, 0);
+
 
         // -------- Trace --------
         var tPanel = w.add("panel", undefined, "Path Trace");
