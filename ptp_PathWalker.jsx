@@ -314,53 +314,74 @@
         return segs;
     }
 
-    // Filter out vertices closer than minDist to the previous kept vertex.
-    function filterCloseVertices(pd, minDist, dbg) {
-        if (!pd || !pd.verts || pd.verts.length < 2 || minDist <= 0) {
-            if (dbg) dbg.push("filter: skipped");
-            return pd;
-        }
-        var verts = pd.verts, inT = pd.inT || [], outT = pd.outT || [];
+            // Cluster nearby vertices, return marker placement data.
+    // mode:
+    //   "centroid" — marker positions = centroid of cluster (path NOT preserved between markers)
+    //   "smooth"   — marker positions = middle vertex of cluster (real point on path)
+    function clusterMarkers(pd, minDist, mode, dbg) {
+        var verts = pd.verts;
+        var n = verts.length;
         var closed = !!pd.closed;
-        var keptIdx = [0];
-        var lastKept = verts[0];
-        var skipped = 0;
-        for (var i = 1; i < verts.length; i++) {
-            var dx = verts[i][0] - lastKept[0], dy = verts[i][1] - lastKept[1];
-            if (Math.sqrt(dx*dx + dy*dy) >= minDist) {
-                keptIdx.push(i);
-                lastKept = verts[i];
-            } else skipped++;
+        // Default: no filtering — every vertex is its own marker
+        if (!verts || n < 2 || minDist <= 0) {
+            var idxAll = [], posAll = [];
+            for (var z = 0; z < n; z++) { idxAll.push(z); posAll.push(verts[z]); }
+            if (dbg) dbg.push("cluster: off, " + n + " markers");
+            return { indices: idxAll, positions: posAll, clusters: null };
         }
-        if (closed && keptIdx.length > 2) {
-            var last = verts[keptIdx[keptIdx.length - 1]];
-            var first = verts[keptIdx[0]];
-            var dxc = last[0]-first[0], dyc = last[1]-first[1];
-            if (Math.sqrt(dxc*dxc + dyc*dyc) < minDist) { keptIdx.pop(); skipped++; }
+
+        // Build consecutive clusters
+        var clusters = [];
+        var cur = [0];
+        for (var i = 1; i < n; i++) {
+            var prev = verts[cur[cur.length - 1]];
+            var dx = verts[i][0] - prev[0], dy = verts[i][1] - prev[1];
+            if (Math.sqrt(dx*dx + dy*dy) < minDist) cur.push(i);
+            else { clusters.push(cur); cur = [i]; }
         }
-        if (!closed) {
-            var lastOrig = verts.length - 1;
-            if (keptIdx[keptIdx.length - 1] !== lastOrig) {
-                var prev = verts[keptIdx[keptIdx.length - 1]];
-                var dx2 = verts[lastOrig][0]-prev[0], dy2 = verts[lastOrig][1]-prev[1];
-                if (Math.sqrt(dx2*dx2 + dy2*dy2) < minDist) {
-                    keptIdx[keptIdx.length - 1] = lastOrig;
-                } else keptIdx.push(lastOrig);
+        clusters.push(cur);
+
+        // Wrap-around for closed paths
+        if (closed && clusters.length > 1) {
+            var lastC = clusters[clusters.length - 1];
+            var firstC = clusters[0];
+            var pLast = verts[lastC[lastC.length - 1]];
+            var pFirst = verts[firstC[0]];
+            var dxc = pLast[0] - pFirst[0], dyc = pLast[1] - pFirst[1];
+            if (Math.sqrt(dxc*dxc + dyc*dyc) < minDist) {
+                clusters[0] = lastC.concat(firstC);
+                clusters.pop();
             }
         }
-        var nv = [], ni = [], no = [];
-        for (var k = 0; k < keptIdx.length; k++) {
-            var idx = keptIdx[k];
-            nv.push(verts[idx]);
-            ni.push(inT[idx]  || [0,0]);
-            no.push(outT[idx] || [0,0]);
+
+        var indices = [], positions = [];
+        for (var c = 0; c < clusters.length; c++) {
+            var cl = clusters[c];
+            if (cl.length === 1) {
+                indices.push(cl[0]);
+                positions.push(verts[cl[0]]);
+            } else if (mode === "centroid") {
+                // Center of cluster — independent of path
+                var sx = 0, sy = 0;
+                for (var j = 0; j < cl.length; j++) { sx += verts[cl[j]][0]; sy += verts[cl[j]][1]; }
+                indices.push(cl[Math.floor(cl.length / 2)]); // for boundary tracking
+                positions.push([sx / cl.length, sy / cl.length]);
+            } else {
+                // "smooth" — pick real middle vertex of cluster
+                var midIdx = cl[Math.floor(cl.length / 2)];
+                indices.push(midIdx);
+                positions.push(verts[midIdx]);
+            }
         }
+
         if (dbg) {
-            dbg.push("filter: minDist=" + minDist);
-            dbg.push("  before=" + verts.length + ", after=" + nv.length + ", skipped=" + skipped);
+            dbg.push("cluster: mode=" + mode + ", minDist=" + minDist);
+            dbg.push("  verts=" + n + ", clusters=" + clusters.length);
         }
-        return { verts: nv, inT: ni, outT: no, closed: closed };
+        return { indices: indices, positions: positions, clusters: clusters };
     }
+
+
 
     // ============================================================
     // SHAPE BUILDERS
@@ -428,6 +449,25 @@
 
         return { group: grp, pathProp: pathProp, trim: trim };
     }
+    function applyDashIfNeeded(info, dashed) {
+        if (!dashed || !info.group) return;
+        try {
+            var inner = info.group.property("ADBE Vectors Group");
+            for (var kk = 1; kk <= inner.numProperties; kk++) {
+                var pp = inner.property(kk);
+                if (pp && pp.matchName === "ADBE Vector Graphic - Stroke") {
+                    var dashes = pp.property("ADBE Vector Stroke Dashes");
+                    if (dashes) {
+                        var d = dashes.addProperty("ADBE Vector Stroke Dash 1");
+                        try { d.setValue(6); } catch(e){}
+                        var g = dashes.addProperty("ADBE Vector Stroke Gap 1");
+                        try { g.setValue(4); } catch(e){}
+                    }
+                    break;
+                }
+            }
+        } catch(e) {}
+    }
 
     // Helper for loop-block: get fresh group ref by name
     function findGroupByName(parent, name) {
@@ -457,21 +497,26 @@
             if (opts.direction === "CCW" && area > 0) pd = reversePathData(pd);
         }
 
-        // === FILTER CLOSE VERTICES ===
+                       // === CLUSTER MARKERS ===
+        // Markers may be filtered; segments behavior depends on mode:
+        //   centroid → straight lines between centroid markers
+        //   smooth   → full original path between sparse markers
+        //   off (minVertexDist=0) → every vertex gets a marker, full path segments
         var filterDbg = [];
-        if (opts.minVertexDist && opts.minVertexDist > 0) {
-            pd = filterCloseVertices(pd, opts.minVertexDist, filterDbg);
-            if (!pd.verts || pd.verts.length < 2) {
-                alert("After filtering only " + (pd.verts ? pd.verts.length : 0) +
-                      " vertices left.\nReduce 'Min Vertex Distance'.\n\n" +
-                      filterDbg.join("\n"));
-                return;
-            }
+        var mode = opts.mergeMode || "centroid";
+        var cluster = clusterMarkers(pd, opts.minVertexDist || 0, mode, filterDbg);
+        var markerPositions = cluster.positions;     // where to place markers
+        var markerIndices   = cluster.indices;        // index into pd.verts (for boundaries)
+        var numMarkers = markerPositions.length;
+        if (numMarkers < 1) {
+            alert("No markers after clustering.\nReduce 'Min Vertex Distance'.\n\n" + filterDbg.join("\n"));
+            return;
         }
+        // alert("Cluster report:\n" + filterDbg.join("\n"));
 
-        var segments = buildSegments(pd);
-        var numSegs = segments.length;
         var numVerts = pd.verts.length;
+        var numSegs = 0; // will be filled in segments block
+
 
         var outLayer = comp.layers.addShape();
         outLayer.name = LAYER_PREFIX + srcLayer.name;
@@ -492,10 +537,10 @@
         var segDur    = opts.segDur;
         var stepDelay = markerDur + segDur;
 
-        // Build MARKERS FIRST so they occupy lower indices (= rendered on top)
+                // Build MARKERS FIRST so they occupy lower indices (= rendered on top)
         if (opts.showMarkers) {
-            for (var m = 0; m < numVerts; m++) {
-                var v = pd.verts[m];
+            for (var m = 0; m < numMarkers; m++) {
+                var v = markerPositions[m];
                 var mShape = buildMarkerPath(opts.markerType, opts.markerSize);
                 var useStrokeForMarker = (opts.markerType === "Circle");
                 var info2 = addPathGroup(
@@ -520,47 +565,91 @@
             }
         }
 
-        // Build SEGMENTS AFTER markers
+                // Build SEGMENTS AFTER markers.
+        // In "centroid" mode: straight segments between marker centroids.
+        // In "smooth" mode (or off): segments follow the full original path,
+        // grouped between consecutive marker indices to keep tempo aligned.
         if (opts.showTrace) {
-            for (var s = 0; s < numSegs; s++) {
-                var segShape = buildSegmentPath(segments[s]);
-                var info = addPathGroup(
-                    contents, "Segment_" + (s + 1), segShape,
-                    null, opts.traceColor, opts.traceWidth,
-                    true, false, true
-                );
-                if (opts.dashed && info.group) {
-                    try {
-                        var inner = info.group.property("ADBE Vectors Group");
-                        for (var kk = 1; kk <= inner.numProperties; kk++) {
-                            var pp = inner.property(kk);
-                            if (pp && pp.matchName === "ADBE Vector Graphic - Stroke") {
-                                var dashes = pp.property("ADBE Vector Stroke Dashes");
-                                if (dashes) {
-                                    var d = dashes.addProperty("ADBE Vector Stroke Dash 1");
-                                    try { d.setValue(6); } catch(e){}
-                                    var g = dashes.addProperty("ADBE Vector Stroke Gap 1");
-                                    try { g.setValue(4); } catch(e){}
-                                }
-                                break;
-                            }
-                        }
-                    } catch(e) {}
+            var useSmooth = (mode === "smooth") || (!opts.minVertexDist || opts.minVertexDist <= 0);
+            var segCounter = 0;
+
+            if (!useSmooth) {
+                // CENTROID: straight lines between markerPositions
+                var lastIdx = pd.closed ? numMarkers : (numMarkers - 1);
+                for (var s = 0; s < lastIdx; s++) {
+                    var a = markerPositions[s];
+                    var b = markerPositions[(s + 1) % numMarkers];
+                    var segShape = buildSegmentPath({ a:a, b:b, oTa:[0,0], iTb:[0,0] });
+                    segCounter++;
+                    var info = addPathGroup(
+                        contents, "Segment_" + segCounter, segShape,
+                        null, opts.traceColor, opts.traceWidth,
+                        true, false, true
+                    );
+                    applyDashIfNeeded(info, opts.dashed);
+                    var trimEnd = info.trim.property("End");
+                    var segStart = t0 + s * stepDelay + markerDur;
+                    trimEnd.setValueAtTime(segStart, 0);
+                    trimEnd.setValueAtTime(segStart + segDur, 100);
+                    applyEasingToProp(trimEnd, opts.easing);
                 }
-                var trimEnd = info.trim.property("End");
-                var segStart = t0 + (s * stepDelay) + markerDur;
-                trimEnd.setValueAtTime(segStart, 0);
-                trimEnd.setValueAtTime(segStart + segDur, 100);
-                applyEasingToProp(trimEnd, opts.easing);
+            } else {
+                // SMOOTH (or off): follow real path between marker indices
+                var boundaries = [];
+                var bLast = pd.closed ? numMarkers : (numMarkers - 1);
+                for (var bi = 0; bi < bLast; bi++) {
+                    var iA = markerIndices[bi];
+                    var iB = markerIndices[(bi + 1) % numMarkers];
+                    // For wrap-around make end index > start
+                    if (iB <= iA && pd.closed) iB += pd.verts.length;
+                    boundaries.push([iA, iB]);
+                }
+
+                for (var bIdx = 0; bIdx < boundaries.length; bIdx++) {
+                    var a0 = boundaries[bIdx][0];
+                    var b0 = boundaries[bIdx][1];
+                    var subCount = b0 - a0;
+                    if (subCount < 1) continue;
+                    var chunkStart = t0 + bIdx * stepDelay + markerDur;
+                    var perSub = segDur / subCount;
+
+                    for (var k = 0; k < subCount; k++) {
+                        var srcA = (a0 + k) % pd.verts.length;
+                        var srcB = (a0 + k + 1) % pd.verts.length;
+                        var seg = {
+                            a: pd.verts[srcA],
+                            b: pd.verts[srcB],
+                            oTa: pd.outT[srcA] || [0,0],
+                            iTb: pd.inT[srcB]  || [0,0]
+                        };
+                        var segShape = buildSegmentPath(seg);
+                        segCounter++;
+                        var info = addPathGroup(
+                            contents, "Segment_" + segCounter, segShape,
+                            null, opts.traceColor, opts.traceWidth,
+                            true, false, true
+                        );
+                        applyDashIfNeeded(info, opts.dashed);
+                        var trimEnd = info.trim.property("End");
+                        var subStart = chunkStart + k * perSub;
+                        trimEnd.setValueAtTime(subStart, 0);
+                        trimEnd.setValueAtTime(subStart + perSub, 100);
+                        applyEasingToProp(trimEnd, opts.easing);
+                    }
+                }
             }
+
+            numSegs = segCounter;
         }
+
 
         // ---- LOOP HANDLING ----
         var lastActiveTime = t0;
         var cycleEnd = t0;
         if (opts.loop) {
-            var lastSegEnd  = numSegs  > 0 ? (t0 + (numSegs  - 1) * stepDelay + markerDur + segDur) : t0;
-            var lastMarkEnd = numVerts > 0 ? (t0 + (numVerts - 1) * stepDelay + markerDur)          : t0;
+                       var lastSegEnd  = numMarkers > 0 ? (t0 + (numMarkers - 1) * stepDelay + markerDur + segDur) : t0;
+            var lastMarkEnd = numMarkers > 0 ? (t0 + (numMarkers - 1) * stepDelay + markerDur)          : t0;
+
             lastActiveTime = Math.max(lastSegEnd, lastMarkEnd);
             cycleEnd = t0 + opts.cycle;
             if (cycleEnd <= lastActiveTime + 0.2) cycleEnd = lastActiveTime + 0.5;
@@ -591,7 +680,8 @@
 
             // Markers
             if (opts.showMarkers) {
-                for (var mi = 0; mi < numVerts; mi++) {
+                               for (var mi = 0; mi < numMarkers; mi++) {
+
                     try {
                         var g2 = findGroupByName(contents, "Marker_" + (mi + 1));
                         if (!g2) continue;
@@ -740,7 +830,8 @@
             easing:            "Ease Out",
             loop:              false,
             cycle:             3.0,
-            minVertexDist:     0
+            minVertexDist:     0,
+            mergeMode:         "centroid",
         };
 
         // -------- Source Path --------
@@ -829,6 +920,22 @@
         // Min Vertex Distance (now in Source Path panel — controls path itself)
         addSlider(srcPanel, "Min vert dist (px)", 0, 200, state.minVertexDist, 1,
             function(v){ state.minVertexDist = v; });
+        var rowMerge = srcPanel.add("group");
+        rowMerge.orientation = "row";
+        rowMerge.minimumSize.width = 290;
+        var mergeLbl = rowMerge.add("statictext", undefined, "Merge mode:");
+        mergeLbl.preferredSize.width = 110;
+        mergeLbl.minimumSize.width = 110;
+                var mergeDD = rowMerge.add("dropdownlist", undefined, ["Centroid", "Smooth"]);
+        mergeDD.selection = mergeDD.find("Centroid");
+        mergeDD.preferredSize.width = 130;
+        mergeDD.minimumSize.width = 100;
+        mergeDD.helpTip = "Centroid: markers at cluster center, straight lines between them.\nSmooth: markers on path, segments follow original path with curves.";
+        mergeDD.onChange = function(){
+            state.mergeMode = mergeDD.selection.text.toLowerCase();
+        };
+
+
 
         // -------- Markers --------
         var mPanel = w.add("panel", undefined, "Markers");
