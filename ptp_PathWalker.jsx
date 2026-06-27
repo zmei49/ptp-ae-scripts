@@ -2,21 +2,21 @@
 // ptp_PathWalker.jsx
 // Walk along a path: place markers at vertices and draw
 // segments between them sequentially (clockwise/CCW).
-// // var SCRIPT_VERSION = "v1.0.2";
-// Changes vs 1.0.1:
-//   • Convert to Bezier: two-pass algorithm (collect → reverse-process)
-//     fixes "object is invalid" errors when removing parametric paths.
-//   • Z-order: markers now correctly render on top via moveTo(1..N)
-//     (lower index = higher in render stack inside shape contents).
-//   • Loop: reset uses HOLD keys at cycleEnd - 0.05 → cycleEnd for both
-//     segments (Trim End 100→0) and markers (Opacity 100→0, Scale [100]→[0,0])
-//     so old trace properly disappears before the next cycle.
-//   • lastActiveTime calc fixed: now uses max(last segment end, last marker end).
+// var SCRIPT_VERSION = "v1.0.3";
+// Changes vs 1.0.2:
+//   • Fixed sampleParametricToShape: Ellipse/Star now use matchName-based
+//     property access (works in RU locale). Rect with roundness preserves
+//     corners as 8-vertex bezier.
+//   • Added filterCloseVertices: removes vertices closer than minDist
+//     (avoids marker pile-up on rounded corners).
+//   • Added "Min Vertex Distance" slider, wired into opts.minVertexDist.
+//   • Loop debug uses findGroupByName (avoids "Object is invalid").
+//   • addSlider/makeColorSwatch return refs (for external value access if needed).
 // ============================================================
 
 (function (thisObj) {
     var SCRIPT_NAME = "ptp_PathWalker";
-    var SCRIPT_VERSION = "v1.0.2";
+    var SCRIPT_VERSION = "v1.0.3";
     var LAYER_PREFIX = "PW_";
 
     var COL_ACCENT = [1.00, 0.55, 0.10];
@@ -82,7 +82,10 @@
     }
 
     function setLoopExpression(prop, mode) {
-        try { prop.expression = 'loopOut("' + (mode || "cycle") + '")'; } catch(e) {}
+        try {
+            prop.expression = 'loopOut("' + (mode || "cycle") + '")';
+            prop.expressionEnabled = true;
+        } catch(e) {}
     }
 
     // ============================================================
@@ -137,7 +140,7 @@
     // ============================================================
     // CONVERT PARAMETRIC TO BEZIER
     // ============================================================
-        function convertParametricToBezier(layer) {
+    function convertParametricToBezier(layer) {
         if (!(layer instanceof ShapeLayer)) {
             alert("Select a Shape Layer to convert parametric paths.");
             return 0;
@@ -148,8 +151,7 @@
             "ADBE Vector Shape - Star":    true
         };
 
-        // PASS 1: collect all parametric properties with their parent group + index
-        var toConvert = []; // [{parent, index, prop, name}]
+        var toConvert = [];
         function collect(group) {
             for (var i = 1; i <= group.numProperties; i++) {
                 var p;
@@ -169,7 +171,6 @@
         if (!root) return 0;
         collect(root);
 
-        // PASS 2: convert in reverse order so removing doesn't shift earlier indices
         var converted = 0;
         for (var k = toConvert.length - 1; k >= 0; k--) {
             var item = toConvert[k];
@@ -179,9 +180,7 @@
                 var bezPath = item.parent.addProperty("ADBE Vector Shape - Group");
                 try { bezPath.property("ADBE Vector Shape").setValue(shapeData); } catch(e){}
                 try { bezPath.name = item.name + " (Bezier)"; } catch(e){}
-                // Move bezier to the original parametric's slot
                 try { bezPath.moveTo(item.index); } catch(e){}
-                // Remove the old parametric (now sitting at item.index + 1)
                 try { item.prop.remove(); } catch(e){}
                 converted++;
             } catch(e) {}
@@ -189,60 +188,42 @@
         return converted;
     }
 
-
     // Sample a parametric shape (Rect / Ellipse / Star) into a Shape object
     function sampleParametricToShape(prop) {
-        var matchName = prop.matchName;
+        var mn = prop.matchName;
         try {
             if (mn === "ADBE Vector Shape - Rect") {
-    var size = prop.property("ADBE Vector Rect Size").value;
-    var pos  = prop.property("ADBE Vector Rect Position").value;
-    var rnd  = 0;
-    try { rnd = prop.property("ADBE Vector Rect Roundness").value; } catch(e) {}
-    var w = size[0]/2, h = size[1]/2;
-    var cx = pos[0], cy = pos[1];
-    var r = Math.min(rnd, w, h);
-    if (r <= 0.01) {
-        // обычный прямоугольник
-        var shape = new Shape();
-        shape.vertices = [[cx-w,cy-h],[cx+w,cy-h],[cx+w,cy+h],[cx-w,cy+h]];
-        shape.inTangents  = [[0,0],[0,0],[0,0],[0,0]];
-        shape.outTangents = [[0,0],[0,0],[0,0],[0,0]];
-        shape.closed = true;
-        return shape;
-    }
-    // скруглённый прямоугольник — 8 вершин, безье-касательные
-    // коэффициент Безье для аппроксимации четверти окружности
-    var k = r * 0.5522847498;
-    var verts = [
-        [cx-w+r, cy-h],   // 0: top-left после скругления
-        [cx+w-r, cy-h],   // 1: top-right до скругления
-        [cx+w,   cy-h+r], // 2: right-top после скругления
-        [cx+w,   cy+h-r], // 3: right-bottom до скругления
-        [cx+w-r, cy+h],   // 4: bottom-right после скругления
-        [cx-w+r, cy+h],   // 5: bottom-left до скругления
-        [cx-w,   cy+h-r], // 6: left-bottom после скругления
-        [cx-w,   cy-h+r]  // 7: left-top до скругления
-    ];
-    var inT = [
-        [-k, 0], [0, 0], [0, -k], [0, 0],
-        [ k, 0], [0, 0], [0,  k], [0, 0]
-    ];
-    var outT = [
-        [0, 0], [ k, 0], [0, 0], [0,  k],
-        [0, 0], [-k, 0], [0, 0], [0, -k]
-    ];
-    var shape = new Shape();
-    shape.vertices = verts;
-    shape.inTangents = inT;
-    shape.outTangents = outT;
-    shape.closed = true;
-    return shape;
-}
-
-            if (matchName === "ADBE Vector Shape - Ellipse") {
-                var size = prop.property("Size").value;
-                var pos  = prop.property("Position").value;
+                var size = prop.property("ADBE Vector Rect Size").value;
+                var pos  = prop.property("ADBE Vector Rect Position").value;
+                var rnd  = 0;
+                try { rnd = prop.property("ADBE Vector Rect Roundness").value; } catch(e) {}
+                var w = size[0]/2, h = size[1]/2;
+                var cx = pos[0], cy = pos[1];
+                var r = Math.min(rnd, w, h);
+                if (r <= 0.01) {
+                    var shape = new Shape();
+                    shape.vertices    = [[cx-w,cy-h],[cx+w,cy-h],[cx+w,cy+h],[cx-w,cy+h]];
+                    shape.inTangents  = [[0,0],[0,0],[0,0],[0,0]];
+                    shape.outTangents = [[0,0],[0,0],[0,0],[0,0]];
+                    shape.closed = true;
+                    return shape;
+                }
+                var k = r * 0.5522847498;
+                var shape = new Shape();
+                shape.vertices = [
+                    [cx-w+r, cy-h],   [cx+w-r, cy-h],
+                    [cx+w,   cy-h+r], [cx+w,   cy+h-r],
+                    [cx+w-r, cy+h],   [cx-w+r, cy+h],
+                    [cx-w,   cy+h-r], [cx-w,   cy-h+r]
+                ];
+                shape.inTangents  = [[-k,0],[0,0],[0,-k],[0,0],[ k,0],[0,0],[0, k],[0,0]];
+                shape.outTangents = [[ 0,0],[ k,0],[0, 0],[0, k],[ 0,0],[-k,0],[0, 0],[0,-k]];
+                shape.closed = true;
+                return shape;
+            }
+            if (mn === "ADBE Vector Shape - Ellipse") {
+                var size = prop.property("ADBE Vector Ellipse Size").value;
+                var pos  = prop.property("ADBE Vector Ellipse Position").value;
                 var rx = size[0]/2, ry = size[1]/2;
                 var cx = pos[0], cy = pos[1];
                 var k = 0.5522847498;
@@ -258,24 +239,22 @@
                 s.closed = true;
                 return s;
             }
-            if (matchName === "ADBE Vector Shape - Star") {
-                var points = Math.round(prop.property("Points").value);
-                var pos    = prop.property("Position").value;
-                var rot    = prop.property("Rotation").value * Math.PI / 180;
-                var outerR = prop.property("Outer Radius").value;
-                var starType = prop.property("Type").value; // 1=Star, 2=Polygon
+            if (mn === "ADBE Vector Shape - Star") {
+                var points = Math.round(prop.property("ADBE Vector Star Points").value);
+                var pos    = prop.property("ADBE Vector Star Position").value;
+                var rot    = prop.property("ADBE Vector Star Rotation").value * Math.PI / 180;
+                var outerR = prop.property("ADBE Vector Star Outer Radius").value;
+                var starType = prop.property("ADBE Vector Star Type").value; // 1=Star, 2=Polygon
                 var s = new Shape();
                 var verts = [], inT = [], outT = [];
                 if (starType === 2) {
-                    // Polygon
                     for (var i = 0; i < points; i++) {
                         var a = rot - Math.PI/2 + (Math.PI*2*i/points);
                         verts.push([pos[0] + outerR*Math.cos(a), pos[1] + outerR*Math.sin(a)]);
                         inT.push([0,0]); outT.push([0,0]);
                     }
                 } else {
-                    // Star (alternating outer/inner)
-                    var innerR = prop.property("Inner Radius").value;
+                    var innerR = prop.property("ADBE Vector Star Inner Radius").value;
                     var n = points * 2;
                     for (var j = 0; j < n; j++) {
                         var r = (j % 2 === 0) ? outerR : innerR;
@@ -333,6 +312,54 @@
             segs.push({ a: pd.verts[a], b: pd.verts[b], oTa: pd.outT[a], iTb: pd.inT[b] });
         }
         return segs;
+    }
+
+    // Filter out vertices closer than minDist to the previous kept vertex.
+    function filterCloseVertices(pd, minDist, dbg) {
+        if (!pd || !pd.verts || pd.verts.length < 2 || minDist <= 0) {
+            if (dbg) dbg.push("filter: skipped");
+            return pd;
+        }
+        var verts = pd.verts, inT = pd.inT || [], outT = pd.outT || [];
+        var closed = !!pd.closed;
+        var keptIdx = [0];
+        var lastKept = verts[0];
+        var skipped = 0;
+        for (var i = 1; i < verts.length; i++) {
+            var dx = verts[i][0] - lastKept[0], dy = verts[i][1] - lastKept[1];
+            if (Math.sqrt(dx*dx + dy*dy) >= minDist) {
+                keptIdx.push(i);
+                lastKept = verts[i];
+            } else skipped++;
+        }
+        if (closed && keptIdx.length > 2) {
+            var last = verts[keptIdx[keptIdx.length - 1]];
+            var first = verts[keptIdx[0]];
+            var dxc = last[0]-first[0], dyc = last[1]-first[1];
+            if (Math.sqrt(dxc*dxc + dyc*dyc) < minDist) { keptIdx.pop(); skipped++; }
+        }
+        if (!closed) {
+            var lastOrig = verts.length - 1;
+            if (keptIdx[keptIdx.length - 1] !== lastOrig) {
+                var prev = verts[keptIdx[keptIdx.length - 1]];
+                var dx2 = verts[lastOrig][0]-prev[0], dy2 = verts[lastOrig][1]-prev[1];
+                if (Math.sqrt(dx2*dx2 + dy2*dy2) < minDist) {
+                    keptIdx[keptIdx.length - 1] = lastOrig;
+                } else keptIdx.push(lastOrig);
+            }
+        }
+        var nv = [], ni = [], no = [];
+        for (var k = 0; k < keptIdx.length; k++) {
+            var idx = keptIdx[k];
+            nv.push(verts[idx]);
+            ni.push(inT[idx]  || [0,0]);
+            no.push(outT[idx] || [0,0]);
+        }
+        if (dbg) {
+            dbg.push("filter: minDist=" + minDist);
+            dbg.push("  before=" + verts.length + ", after=" + nv.length + ", skipped=" + skipped);
+        }
+        return { verts: nv, inT: ni, outT: no, closed: closed };
     }
 
     // ============================================================
@@ -402,10 +429,19 @@
         return { group: grp, pathProp: pathProp, trim: trim };
     }
 
+    // Helper for loop-block: get fresh group ref by name
+    function findGroupByName(parent, name) {
+        for (var i = 1; i <= parent.numProperties; i++) {
+            var p = parent.property(i);
+            if (p && p.name === name) return p;
+        }
+        return null;
+    }
+
     // ============================================================
     // MAIN GENERATOR
     // ============================================================
-       function generate(opts) {
+    function generate(opts) {
         var comp = getComp(); if (!comp) return;
         var srcLayer = getSelLayer(); if (!srcLayer) return;
 
@@ -415,7 +451,7 @@
         var pd = readPathData(pathRef);
         if (!pd.verts || pd.verts.length < 2) { alert("Path has too few vertices."); return; }
 
-                if (opts.direction === "CW" || opts.direction === "CCW") {
+        if (opts.direction === "CW" || opts.direction === "CCW") {
             var area = signedArea(pd.verts);
             if (opts.direction === "CW"  && area < 0) pd = reversePathData(pd);
             if (opts.direction === "CCW" && area > 0) pd = reversePathData(pd);
@@ -431,8 +467,6 @@
                       filterDbg.join("\n"));
                 return;
             }
-            // Раскомментируй строку ниже, если нужно увидеть отчёт фильтра:
-            // alert("Filter report:\n" + filterDbg.join("\n"));
         }
 
         var segments = buildSegments(pd);
@@ -453,52 +487,40 @@
         } catch(e) {}
 
         var contents = outLayer.property("ADBE Root Vectors Group");
-
         var t0 = comp.time;
         var markerDur = opts.markerDur;
         var segDur    = opts.segDur;
         var stepDelay = markerDur + segDur;
 
-        // === Z-ORDER FIX ===
-        // Build MARKERS FIRST so they occupy lower indices (= rendered on top).
-        // In AE shape contents: lower index = higher rendering order.
-        var markerGroups = [];
+        // Build MARKERS FIRST so they occupy lower indices (= rendered on top)
         if (opts.showMarkers) {
             for (var m = 0; m < numVerts; m++) {
                 var v = pd.verts[m];
                 var mShape = buildMarkerPath(opts.markerType, opts.markerSize);
-
                 var useStrokeForMarker = (opts.markerType === "Circle");
                 var info2 = addPathGroup(
                     contents, "Marker_" + (m + 1), mShape,
                     opts.markerColor, opts.markerColor, opts.markerStrokeWidth,
                     useStrokeForMarker, !useStrokeForMarker, false
                 );
-
                 try {
                     var gt = info2.group.property("ADBE Vector Transform Group");
                     gt.property("ADBE Vector Position").setValue(v);
-
                     var opProp = gt.property("ADBE Vector Group Opacity");
                     var scProp = gt.property("ADBE Vector Scale");
-
                     var markStart = t0 + m * stepDelay;
                     opProp.setValueAtTime(markStart, 0);
                     opProp.setValueAtTime(markStart + markerDur, 100);
                     scProp.setValueAtTime(markStart, [0, 0]);
                     scProp.setValueAtTime(markStart + markerDur * 0.6, [115, 115]);
                     scProp.setValueAtTime(markStart + markerDur, [100, 100]);
-
                     applyEasingToProp(opProp, opts.easing);
                     applyEasingToProp(scProp, opts.easing);
-
-                    markerGroups.push(info2.group);
                 } catch(e) {}
             }
         }
 
-        // Build SEGMENTS AFTER markers (they go below in render order)
-        var segmentGroups = [];
+        // Build SEGMENTS AFTER markers
         if (opts.showTrace) {
             for (var s = 0; s < numSegs; s++) {
                 var segShape = buildSegmentPath(segments[s]);
@@ -507,7 +529,6 @@
                     null, opts.traceColor, opts.traceWidth,
                     true, false, true
                 );
-
                 if (opts.dashed && info.group) {
                     try {
                         var inner = info.group.property("ADBE Vectors Group");
@@ -526,13 +547,11 @@
                         }
                     } catch(e) {}
                 }
-
                 var trimEnd = info.trim.property("End");
                 var segStart = t0 + (s * stepDelay) + markerDur;
                 trimEnd.setValueAtTime(segStart, 0);
                 trimEnd.setValueAtTime(segStart + segDur, 100);
                 applyEasingToProp(trimEnd, opts.easing);
-                segmentGroups.push(info.group);
             }
         }
 
@@ -546,72 +565,74 @@
             cycleEnd = t0 + opts.cycle;
             if (cycleEnd <= lastActiveTime + 0.2) cycleEnd = lastActiveTime + 0.5;
 
-            // Reset and loop SEGMENTS
-            for (var ti = 0; ti < segmentGroups.length; ti++) {
-                try {
-                    var g = segmentGroups[ti];
-                    var innerG = g.property("ADBE Vectors Group");
-                    var trim = null;
-                    for (var jj = 1; jj <= innerG.numProperties; jj++) {
-                        var pr = innerG.property(jj);
-                        if (pr && pr.matchName === "ADBE Vector Filter - Trim") { trim = pr; break; }
-                    }
-                    if (!trim) continue;
-                    var tp = trim.property("End");
-                    tp.setValueAtTime(cycleEnd - 0.05, 100);
-                    tp.setValueAtTime(cycleEnd, 0);
-                    var nLast = tp.numKeys;
-                    tp.setInterpolationTypeAtKey(nLast,     KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-                    tp.setInterpolationTypeAtKey(nLast - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-                    setLoopExpression(tp, "cycle");
-                } catch(e) {}
+            // Segments
+            if (opts.showTrace) {
+                for (var ti = 0; ti < numSegs; ti++) {
+                    try {
+                        var g = findGroupByName(contents, "Segment_" + (ti + 1));
+                        if (!g) continue;
+                        var innerG = g.property("ADBE Vectors Group");
+                        var trim = null;
+                        for (var jj = 1; jj <= innerG.numProperties; jj++) {
+                            var pr = innerG.property(jj);
+                            if (pr && pr.matchName === "ADBE Vector Filter - Trim") { trim = pr; break; }
+                        }
+                        if (!trim) continue;
+                        var tp = trim.property("End");
+                        tp.setValueAtTime(cycleEnd - 0.05, 100);
+                        tp.setValueAtTime(cycleEnd, 0);
+                        var nLast = tp.numKeys;
+                        tp.setInterpolationTypeAtKey(nLast,     KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+                        tp.setInterpolationTypeAtKey(nLast - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+                        setLoopExpression(tp, "cycle");
+                    } catch(e) {}
+                }
             }
 
-            // Reset and loop MARKERS
-            for (var mi = 0; mi < markerGroups.length; mi++) {
-                try {
-                    var g2 = markerGroups[mi];
-                    var gt2 = g2.property("ADBE Vector Transform Group");
-                    var mop = gt2.property("ADBE Vector Group Opacity");
-                    var msc = gt2.property("ADBE Vector Scale");
-
-                    mop.setValueAtTime(cycleEnd - 0.05, 100);
-                    mop.setValueAtTime(cycleEnd, 0);
-                    msc.setValueAtTime(cycleEnd - 0.05, [100,100]);
-                    msc.setValueAtTime(cycleEnd, [0,0]);
-
-                    var n1 = mop.numKeys, n2 = msc.numKeys;
-                    mop.setInterpolationTypeAtKey(n1,     KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-                    mop.setInterpolationTypeAtKey(n1 - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-                    msc.setInterpolationTypeAtKey(n2,     KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-                    msc.setInterpolationTypeAtKey(n2 - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-
-                    setLoopExpression(mop, "cycle");
-                    setLoopExpression(msc, "cycle");
-                } catch(e) {}
+            // Markers
+            if (opts.showMarkers) {
+                for (var mi = 0; mi < numVerts; mi++) {
+                    try {
+                        var g2 = findGroupByName(contents, "Marker_" + (mi + 1));
+                        if (!g2) continue;
+                        var gt2 = g2.property("ADBE Vector Transform Group");
+                        var mop = gt2.property("ADBE Vector Group Opacity");
+                        var msc = gt2.property("ADBE Vector Scale");
+                        mop.setValueAtTime(cycleEnd - 0.05, 100);
+                        mop.setValueAtTime(cycleEnd, 0);
+                        msc.setValueAtTime(cycleEnd - 0.05, [100,100]);
+                        msc.setValueAtTime(cycleEnd, [0,0]);
+                        var n1 = mop.numKeys, n2 = msc.numKeys;
+                        mop.setInterpolationTypeAtKey(n1,     KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+                        mop.setInterpolationTypeAtKey(n1 - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+                        msc.setInterpolationTypeAtKey(n2,     KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+                        msc.setInterpolationTypeAtKey(n2 - 1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+                        setLoopExpression(mop, "cycle");
+                        setLoopExpression(msc, "cycle");
+                    } catch(e) {}
+                }
             }
 
-            // ---- DEBUG ALERT ----
+            // Debug alert
             var dbg = "Loop debug:\n";
             dbg += "lastActive=" + lastActiveTime.toFixed(2) + "s\n";
             dbg += "cycleEnd="   + cycleEnd.toFixed(2) + "s\n";
-            if (markerGroups.length > 0) {
-                try {
-                    var g0 = markerGroups[0]
-                        .property("ADBE Vector Transform Group")
-                        .property("ADBE Vector Group Opacity");
-                    dbg += "Marker_1 Opacity keys: " + g0.numKeys + "\n";
-                    dbg += "expr: " + (g0.expression || "(empty)") + "\n";
-                    dbg += "exprEnabled: " + g0.expressionEnabled + "\n";
-                } catch(e) { dbg += "err: " + e.toString(); }
-            }
+            try {
+                var dbgGroup = findGroupByName(contents, "Marker_1");
+                if (dbgGroup) {
+                    var dbgOp = dbgGroup.property("ADBE Vector Transform Group").property("ADBE Vector Group Opacity");
+                    dbg += "Marker_1 Opacity keys: " + dbgOp.numKeys + "\n";
+                    dbg += "expr: " + (dbgOp.expression || "(empty)") + "\n";
+                    dbg += "exprEnabled: " + dbgOp.expressionEnabled + "\n";
+                } else {
+                    dbg += "Marker_1 not found\n";
+                }
+            } catch(e) { dbg += "err: " + e.toString(); }
             alert(dbg);
         }
 
         return outLayer;
     }
-
-
 
     // ============================================================
     // UI HELPERS
@@ -638,7 +659,7 @@
         sld.onChanging = function(){
             var v = (step >= 1) ? Math.round(sld.value) : Math.round(sld.value/step)*step;
             box.text = (step >= 1) ? String(v) : v.toFixed(2);
-            onChange(v);
+            if (onChange) onChange(v);
         };
         box.onChange = function(){
             var v = parseFloat(box.text);
@@ -646,8 +667,9 @@
             v = clamp(v, mn, mx);
             sld.value = v;
             box.text = (step >= 1) ? String(Math.round(v)) : v.toFixed(2);
-            onChange(v);
+            if (onChange) onChange(v);
         };
+        return { slider: sld, box: box };
     }
     function makeColorSwatch(parent, label, initialColor, onChange) {
         var row = parent.add("group");
@@ -717,7 +739,8 @@
             segDur:            0.25,
             easing:            "Ease Out",
             loop:              false,
-            cycle:             3.0
+            cycle:             3.0,
+            minVertexDist:     0
         };
 
         // -------- Source Path --------
@@ -773,7 +796,7 @@
         rowConv.minimumSize.width = 290;
         var convBtn = rowConv.add("button", undefined, "Convert to Bezier Paths");
         convBtn.preferredSize.width = 200;
-        convBtn.helpTip = "Converts parametric Rect/Ellipse/Star paths in the selected Shape Layer to editable Bezier paths.";
+        convBtn.helpTip = "Converts parametric Rect/Ellipse/Star paths to editable Bezier paths.";
         convBtn.onClick = function(){
             var lyr;
             try {
@@ -803,6 +826,10 @@
             state.direction = (t === "Vertex Order") ? "VertexOrder" : t;
         };
 
+        // Min Vertex Distance (now in Source Path panel — controls path itself)
+        addSlider(srcPanel, "Min vert dist (px)", 0, 200, state.minVertexDist, 1,
+            function(v){ state.minVertexDist = v; });
+
         // -------- Markers --------
         var mPanel = w.add("panel", undefined, "Markers");
         mPanel.orientation = "column";
@@ -825,10 +852,6 @@
         addSlider(mPanel, "Size (px)", 2, 60, state.markerSize, 1, function(v){ state.markerSize = v; });
         addSlider(mPanel, "Stroke W (Circle)", 1, 10, state.markerStrokeWidth, 1, function(v){ state.markerStrokeWidth = v; });
         makeColorSwatch(mPanel, "Color", state.markerColor, function(c){ state.markerColor = c; });
-
-        // === MIN VERTEX DISTANCE ===
-        var sliMinDist = addSlider(w, "Min Vertex Distance (px):", 0, 200, 0);
-
 
         // -------- Trace --------
         var tPanel = w.add("panel", undefined, "Path Trace");
@@ -923,18 +946,20 @@
             "2. Click ↻ to refresh.\n" +
             "3. (If needed) Click 'Convert to Bezier Paths' for Rect/Ellipse/Star primitives.\n" +
             "4. Pick the path and direction.\n" +
-            "5. Configure markers and trace.\n" +
-            "6. Set CTI to start time.\n" +
-            "7. Click 'Create Walker'.\n\n" +
+            "5. Set 'Min vert dist' to avoid marker pile-up on rounded corners.\n" +
+            "6. Configure markers and trace.\n" +
+            "7. Set CTI to start time. Click 'Create Walker'.\n\n" +
             "DIRECTION:\n" +
             "• Vertex Order — uses raw vertex order.\n" +
             "• CW / CCW — auto-reverses path if needed.\n\n" +
+            "MIN VERT DIST:\n" +
+            "• 0 = off. 15–30 px usually removes 'double markers' on rounded corners.\n\n" +
             "ANIMATION:\n" +
             "• Marker dur — pop-in time per vertex (up to 10s).\n" +
             "• Segment dur — draw time per segment (up to 20s).\n" +
             "• Loop — holds full trace, then resets at Cycle Length.\n\n" +
             "Z-ORDER:\n" +
-            "• Markers are added AFTER segments → they render on top.\n";
+            "• Markers are built before segments → render on top.\n";
     }
 
     buildUI(thisObj);
