@@ -118,57 +118,38 @@
         step = "getContents";
         var contents = L.property("ADBE Root Vectors Group");
 
-        // ---- HALO (outer soft ring) ----
-        step = "haloGroup";
-        var grpHalo = contents.addProperty("ADBE Vector Group");
-        grpHalo.name = "Halo";
-        var innerHalo = grpHalo.property("ADBE Vectors Group");
+        // ---- Single group with radial gradient ----
+        step = "addGroup";
+        var grp = contents.addProperty("ADBE Vector Group");
+        grp.name = "Light";
+        var inner = grp.property("ADBE Vectors Group");
 
-        step = "haloEllipse";
-        innerHalo.addProperty("ADBE Vector Shape - Ellipse");
+        step = "addEllipse";
+        inner.addProperty("ADBE Vector Shape - Ellipse");
 
-        step = "haloFill";
-        var fillHalo = innerHalo.addProperty("ADBE Vector Graphic - Fill");
-        try { fillHalo.property("Color").setValue(color); } catch(e){}
-        try { fillHalo.property("Opacity").setValue(40); } catch(e){}
+                        step = "addFill";
+        var fill = inner.addProperty("ADBE Vector Graphic - Fill");
+        try { fill.property("Color").setValue(color); } catch(e){}
 
-        step = "haloSize";
-        var haloEll = null;
-        for (var ei = 1; ei <= innerHalo.numProperties; ei++) {
-            var p = innerHalo.property(ei);
-            if (p && p.matchName === "ADBE Vector Shape - Ellipse") { haloEll = p; break; }
+        step = "setEllipseSize";
+        var ellRef = null;
+        for (var ei = 1; ei <= inner.numProperties; ei++) {
+            var p = inner.property(ei);
+            if (p && p.matchName === "ADBE Vector Shape - Ellipse") { ellRef = p; break; }
         }
-        if (!haloEll) throw new Error("Halo ellipse not found");
-        var haloSize = opts.lightSize * 3.0;
-        haloEll.property("ADBE Vector Ellipse Size").setValue([haloSize, haloSize]);
+        if (!ellRef) throw new Error("Ellipse not found");
+        // Fill circle — 70% of lightSize (smaller solid core)
+        var coreDiameter = opts.lightSize * 1.5;
+        ellRef.property("ADBE Vector Ellipse Size").setValue([coreDiameter, coreDiameter]);
 
-        // ---- CORE (bright center) ----
-        step = "coreGroup";
-        var grpCore = contents.addProperty("ADBE Vector Group");
-        grpCore.name = "Core";
-        var innerCore = grpCore.property("ADBE Vectors Group");
+        // Soft radial falloff via Fast Blur — big blur = smooth gradient fade
+        step = "addSoftEdge";
+        try {
+            var fb = L.Effects.addProperty("ADBE Fast Blur");
+            try { fb.property("Blurriness").setValue(opts.lightSize * 0.9); } catch(e){}
+            try { fb.property("Repeat Edge Pixels").setValue(0); } catch(e){}
+        } catch(e){}
 
-        step = "coreEllipse";
-        innerCore.addProperty("ADBE Vector Shape - Ellipse");
-
-        step = "coreFill";
-        var fillCore = innerCore.addProperty("ADBE Vector Graphic - Fill");
-        // brighten core toward white
-        var coreColor = [
-            Math.min(1, color[0] * 0.5 + 0.5),
-            Math.min(1, color[1] * 0.5 + 0.5),
-            Math.min(1, color[2] * 0.5 + 0.5)
-        ];
-        try { fillCore.property("Color").setValue(coreColor); } catch(e){}
-
-        step = "coreSize";
-        var coreEll = null;
-        for (var ei2 = 1; ei2 <= innerCore.numProperties; ei2++) {
-            var p2 = innerCore.property(ei2);
-            if (p2 && p2.matchName === "ADBE Vector Shape - Ellipse") { coreEll = p2; break; }
-        }
-        if (!coreEll) throw new Error("Core ellipse not found");
-        coreEll.property("ADBE Vector Ellipse Size").setValue([opts.lightSize, opts.lightSize]);
 
         // ---- POSITION ----
         step = "position";
@@ -182,7 +163,7 @@
             posProp.setValue([attachPos[0], attachPos[1]]);
         }
 
-        // ---- LAYER OPACITY KEYS (flash on/off) ----
+        // ---- LAYER OPACITY (flash on/off) ----
         step = "opacityKeys";
         var opLayer = L.property("Transform").property("Opacity");
         opLayer.setValueAtTime(comp.time, 0);
@@ -193,7 +174,7 @@
         }
         setHoldAll(opLayer);
 
-        // ---- GLOW EFFECT ----
+        // ---- GLOW (optional, kept from previous version) ----
         step = "glow";
         if (opts.glow) {
             try {
@@ -201,20 +182,9 @@
                 try { gl.property("Glow Threshold").setValue(0); } catch(e){}
                 try { gl.property("Glow Radius").setValue(opts.glowRadius); } catch(e){}
                 try { gl.property("Glow Intensity").setValue(opts.glowIntensity); } catch(e){}
-                try { gl.property("Glow Operation").setValue(3); } catch(e){}      // Add
-                try { gl.property("Glow Colors").setValue(1); } catch(e){}         // Original
-                try { gl.property("Composite Original").setValue(2); } catch(e){}  // On Top
-            } catch(e){}
-
-            // Second pass — bigger glow
-            try {
-                var gl2 = L.Effects.addProperty("ADBE Glow");
-                try { gl2.property("Glow Threshold").setValue(0); } catch(e){}
-                try { gl2.property("Glow Radius").setValue(opts.glowRadius * 2.5); } catch(e){}
-                try { gl2.property("Glow Intensity").setValue(opts.glowIntensity * 0.6); } catch(e){}
-                try { gl2.property("Glow Operation").setValue(3); } catch(e){}
-                try { gl2.property("Glow Colors").setValue(1); } catch(e){}
-                try { gl2.property("Composite Original").setValue(2); } catch(e){}
+                try { gl.property("Glow Operation").setValue(3); } catch(e){}
+                try { gl.property("Glow Colors").setValue(1); } catch(e){}
+                try { gl.property("Composite Original").setValue(2); } catch(e){}
             } catch(e){}
         }
 
@@ -232,6 +202,7 @@
         throw new Error("step=" + step + " | " + err.toString());
     }
 }
+
 
 
   
