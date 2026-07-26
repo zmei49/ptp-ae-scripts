@@ -1,6 +1,9 @@
 // ============================================================
 // ptp_DotPattern.jsx
 // v1.3 — Element types (10), per-section stroke width, rotate to path
+// v1.4 — Robust mask detection, guard against CameraLayer/LightLayer,
+//        smart-defaults keep working across element type switches,
+//        Spread range extended to 800 px
 // Author: ptp toolkit
 // Install: Save into "Support Files/Scripts/ScriptUI Panels/"
 // Run via: Window -> ptp_DotPattern.jsx
@@ -9,7 +12,7 @@
 (function ptp_DotPattern(thisObj) {
 
     var SCRIPT_NAME = "ptp_DotPattern";
-    var SCRIPT_VERSION = "v1.3";
+    var SCRIPT_VERSION = "v1.4";
 
     var COL = {
         bg:        [0.16, 0.16, 0.17, 1],
@@ -77,6 +80,16 @@
     // ============================================================
     function getSourceInfo(layer) {
         var info = {kind:"rect", cx:0, cy:0, w:200, h:200, radius:0, color:DEFAULT_ACCENT.slice()};
+        
+        // Camera/Light не имеют геометрии — возвращаем дефолт
+        if (layer instanceof CameraLayer || layer instanceof LightLayer) {
+            try {
+                var pos = layer.property("Transform").property("Position").value;
+                info.cx = pos[0];
+                info.cy = pos[1];
+            } catch(e) {}
+            return info;
+        }
 
         try {
             var pos = layer.property("Transform").property("Position").value;
@@ -269,15 +282,18 @@
     // ALONG PATH — поиск пути и сэмплирование
     // ============================================================
     function findPathInLayer(layer) {
+        // 1. Проверяем маски через matchName (стабильно на всех локалях)
         try {
-            if (layer.mask && layer.mask.numProperties > 0) {
-                var m = layer.mask(1);
+            var maskGroup = layer.property("ADBE Mask Parade");
+            if (maskGroup && maskGroup.numProperties > 0) {
+                var m = maskGroup.property(1);
                 if (m) {
-                    var mp = m.property("Mask Path");
+                    var mp = m.property("ADBE Mask Shape");
                     if (mp) return { prop: mp, type: "mask" };
                 }
             }
         } catch (e) {}
+        // 2. Проверяем Shape Path'ы
         try {
             var contents = layer.property("ADBE Root Vectors Group");
             if (contents) {
@@ -288,7 +304,7 @@
                     for (var j = 1; j <= inner.numProperties; j++) {
                         var p = inner.property(j);
                         if (p && p.matchName === "ADBE Vector Shape - Group") {
-                            var pathProp = p.property("Path");
+                            var pathProp = p.property("ADBE Vector Shape");
                             if (pathProp) return { prop: pathProp, type: "shape" };
                         }
                     }
@@ -297,6 +313,7 @@
         } catch (e) {}
         return null;
     }
+
 
     function bezierPoint(p0, p1, p2, p3, t) {
         var u = 1 - t;
@@ -432,16 +449,17 @@
     // ============================================================
     // MODE DETECTION
     // ============================================================
-    function detectMode(layer) {
+        function detectMode(layer) {
         var path = findPathInLayer(layer);
         if (!path) return "around";
         if (path.type === "mask") return "along";
         try {
             var v = path.prop.value.vertices;
-            if (v.length <= 4) return "around";
-        } catch (e) {}
+            if (!v || v.length <= 4) return "around";
+        } catch (e) { return "around"; }
         return "along";
     }
+
 
     // ============================================================
     // ELEMENT CREATION — создаёт примитивы внутри переданной inner Group
@@ -819,7 +837,7 @@
 
         var microSpacingSl = mkSlider(w, "Spacing:", 8, 3, 30, " px");
         var padSl = mkSlider(w, "Padding:", 20, 0, 200, " px");
-        var spreadSl = mkSlider(w, "Spread:", 120, 20, 400, " px");
+        var spreadSl = mkSlider(w, "Spread:", 120, 20, 800, " px");
         var densSl = mkSlider(w, "Density:", 0.7, 0.3, 1, "", true);
 
         var falloffG = w.add("group");
@@ -881,25 +899,38 @@
         var helpBtn = btnRow.add("button", undefined, "?");
         helpBtn.preferredSize.width = 30;
 
-        // Авто-подсказка размера при смене Element Type (только если юзер не менял)
+         // Авто-подсказка размера при смене Element Type (только если юзер не менял)
         var microSizeUserChanged = false;
         var accSizeUserChanged = false;
-        microSizeSl.onChange = function(){ microSizeUserChanged = true; };
-        accSizeSl.onChange = function(){ accSizeUserChanged = true; };
+        var suppressMicroSize = false;
+        var suppressAccSize = false;
+
+        microSizeSl.onChange = function(){
+            if (!suppressMicroSize) microSizeUserChanged = true;
+        };
+        accSizeSl.onChange = function(){
+            if (!suppressAccSize) accSizeUserChanged = true;
+        };
+
         microElemDD.onChange = function(){
             if (!microSizeUserChanged) {
                 var def = DEFAULT_SIZE_BY_TYPE[microElemDD.selection.text] || 2;
+                suppressMicroSize = true;
                 microSizeSl.value = def;
-                microSizeSl.notify("onChanging");
+                if (microSizeSl.onChanging) microSizeSl.onChanging();
+                suppressMicroSize = false;
             }
         };
         accElemDD.onChange = function(){
             if (!accSizeUserChanged) {
                 var def = DEFAULT_SIZE_BY_TYPE[accElemDD.selection.text] || 6;
+                suppressAccSize = true;
                 accSizeSl.value = def;
-                accSizeSl.notify("onChanging");
+                if (accSizeSl.onChanging) accSizeSl.onChanging();
+                suppressAccSize = false;
             }
         };
+
 
         function readState() {
             return {
@@ -1014,9 +1045,22 @@
             "Точки + крупные круги-акценты: micro=Dot, accent=Circle+plus.\n" +
             "Технический фон: micro=Cross, accent=Concentric rings.\n" +
             "LED-эффект: micro=Dot, accent=Dashed circle.\n" +
-            "Штрих-код вдоль пути: micro=Cross, Rotate to path=ON.\n\n" +
+            "Штрих-код вдоль пути: micro=X (×), Rotate to path=ON.\n" +
+            "Топографическая карта: micro=Circle (stroke), accent=Concentric rings,\n" +
+            "  Spread=600, Falloff=ease.\n" +
+            "Схема-микроплата: micro=Square (stroke), accent=Circle+dot,\n" +
+            "  Density=0.4, Padding=20.\n\n" +
 
-            "Версия: " + SCRIPT_VERSION + " | 10 element types";
+            "═══ СОВЕТЫ ═══\n" +
+            "• Camera/Light как источник — паттерн центрируется по Position,\n" +
+            "  используется дефолтный прямоугольник 200×200.\n" +
+            "• Smart Size — при переключении Element type размер сбросится\n" +
+            "  на дефолт, если ты не менял его вручную.\n" +
+            "• Для больших композиций (4K+) поднимай Spread до 600-800.\n" +
+            "• Re-generate Last работает даже после удаления source layer\n" +
+            "  (пытается найти его по индексу).\n\n" +
+
+            "Версия: " + SCRIPT_VERSION + " | Robust masks + smart defaults";
     }
 
     buildUI(thisObj);
