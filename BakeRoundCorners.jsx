@@ -444,27 +444,39 @@
 
         var helpText =
             "ptp_BakeRoundCorners " + BC_Data.scriptVersion + "\n\n" +
-            "TWO MODES:\n\n" +
-            "BAKE (default)\n" +
-            "  Physically replaces each sharp corner with two new\n" +
-            "  bezier points, creating a real curved arc.\n" +
-            "  - Vertex count increases (1 corner -> 2 points).\n" +
-            "  - Path data is modified.\n" +
-            "  - Works for motion paths, Lottie export, editing.\n\n" +
+            "ДВА РЕЖИМА:\n\n" +
+            "BAKE (по умолчанию)\n" +
+            "  Физически заменяет каждый острый угол двумя новыми\n" +
+            "  bezier-точками с касательными, создавая настоящую дугу.\n" +
+            "  - Число вершин увеличивается (1 угол -> 2 точки).\n" +
+            "  - Данные пути изменяются.\n" +
+            "  - Подходит для motion paths, Lottie-экспорта, ручного редактирования.\n\n" +
             "FILTER\n" +
-            "  Adds 'Round Corners' modifier - visual only.\n" +
-            "  - Original vertex count stays the same.\n" +
-            "  - Non-destructive.\n\n" +
+            "  Добавляет модификатор 'Round Corners' - только визуально.\n" +
+            "  - Число вершин не меняется.\n" +
+            "  - Недеструктивно, можно отменить удалением модификатора.\n" +
+            "  - AE-ограничение: радиус свыше ~100 px может искажать форму.\n\n" +
             "SCOPE:\n" +
-            "  - All groups: every shape group in selected layers.\n" +
-            "  - Selected only: only groups marked in Contents.\n\n" +
-            "NOTE: Bake skips endpoints of open paths.\n" +
-            "Radius is auto-clamped to half the shortest segment.";
+            "  - All groups: все shape-группы во всех выделенных слоях.\n" +
+            "  - Selected only: только группы, отмеченные в Contents.\n\n" +
+            "ОГРАНИЧЕНИЯ:\n" +
+            "  - Bake работает только с bezier-путями. Параметрические\n" +
+            "    формы (Ellipse, Rectangle, Star, Polygon) не обрабатываются -\n" +
+            "    предварительно конвертируйте: ПКМ на форме -> Convert to\n" +
+            "    Bezier Path.\n" +
+            "  - Bake пропускает крайние точки открытых путей.\n" +
+            "  - Радиус автоматически ограничивается половиной\n" +
+            "    кратчайшего сегмента.\n" +
+            "  - Повторный Bake на уже скруглённой форме увеличит\n" +
+            "    сложность пути.\n\n" +
+            "ПРЕСЕТЫ:\n" +
+            "  Кнопки 0/5/10/20/30/40 применяют соответствующий радиус\n" +
+            "  и сразу запускают операцию с текущими настройками Scope/Mode.";
 
         var t = hw.add("statictext", undefined, helpText, {multiline: true});
         styleText(t, BC_Data.col.text, 11, false);
         t.preferredSize.width = 440;
-        t.preferredSize.height = 320;
+        t.preferredSize.height = 400;
 
         var ok = hw.add("button", undefined, "OK", {name: "ok"});
         ok.preferredSize = [80, 28];
