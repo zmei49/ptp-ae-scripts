@@ -1,0 +1,917 @@
+// ============================================================
+// ptp_ANNY_TANNY.jsx
+// Universal animation library — apply presets to any layer(s)
+// Version: 1.1
+// Changes vs v1.0:
+//   • Easing presets dropdown (Linear, Ease Out, Ease In/Out, Ease Out Back)
+//   • Loop fixed for all animations (adds reset keyframe + loopOut cycle)
+//   • Cycle Length slider when Loop is enabled
+//   • Helper applyEasing() applies bezier-equivalent ease via KeyframeEase
+// Install: Adobe After Effects/Support Files/Scripts/ScriptUI Panels/
+// Open:    Window → ptp_ANNY_TANNY.jsx
+// Changes vs v1.2:
+//   • Removed dead code in isolateChannel and anim_Ripple
+//   • Added Clear ANNY_ button to remove aux layers + expressions
+//   • Fixed Fade + Loop auto-correction (fadeOut min 0.1s)
+//   • Cycle slider uses visible instead of enabled (cleaner UI)
+//   • Fixed window preferred width = 340
+//   • Full Russian help text
+
+// ============================================================
+
+(function (thisObj) {
+    var SCRIPT_NAME = "ptp_ANNY_TANNY";
+    var SCRIPT_VERSION = "v1.3";
+    var LAYER_PREFIX = "ANNY_";
+
+    var COL = {
+        bg:     [0.16, 0.16, 0.18],
+        accent: [1.00, 0.55, 0.10],
+        text:   [0.92, 0.92, 0.92]
+    };
+
+    // Easing presets — mapped to AE KeyframeEase (influence + speed approximations)
+    // AE doesn't take raw cubic-bezier, so we approximate via influence values.
+    var EASING_PRESETS = {
+        "Linear":         { inInf: 0.1,  outInf: 0.1,  interp: "linear", overshoot: false },
+        "Ease Out":       { inInf: 75,   outInf: 15,   interp: "bezier", overshoot: false },
+        "Ease In/Out":    { inInf: 65,   outInf: 65,   interp: "bezier", overshoot: false },
+        "Ease Out Back":  { inInf: 85,   outInf: 25,   interp: "bezier", overshoot: true  }
+    };
+    var EASING_NAMES = ["Linear", "Ease Out", "Ease In/Out", "Ease Out Back"];
+
+    // ============================================================
+    // HELPERS
+    // ============================================================
+    function getComp() {
+        var c = app.project.activeItem;
+        if (!c || !(c instanceof CompItem)) { alert("Open or select a composition first."); return null; }
+        return c;
+    }
+    function getSelLayers() {
+        var c = getComp(); if (!c) return [];
+        var sel = c.selectedLayers;
+        if (!sel || sel.length === 0) { alert("Select at least one layer."); return []; }
+        return sel;
+    }
+    function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
+
+    // Apply easing to ALL keys of a property
+    function applyEasingToProp(prop, easingName) {
+        var preset = EASING_PRESETS[easingName] || EASING_PRESETS["Ease Out"];
+        var dim = 1;
+        try {
+            var sample = prop.valueAtTime(0, false);
+            if (sample instanceof Array) dim = sample.length;
+        } catch(e){}
+
+        for (var i = 1; i <= prop.numKeys; i++) {
+            if (preset.interp === "linear") {
+                try { prop.setInterpolationTypeAtKey(i, KeyframeInterpolationType.LINEAR, KeyframeInterpolationType.LINEAR); } catch(e){}
+            } else {
+                try { prop.setInterpolationTypeAtKey(i, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER); } catch(e){}
+                var ein = [], eout = [];
+                for (var d = 0; d < dim; d++) {
+                    ein.push(new KeyframeEase(0, preset.inInf));
+                    eout.push(new KeyframeEase(0, preset.outInf));
+                }
+                try {
+                    if (dim === 1) prop.setTemporalEaseAtKey(i, [ein[0]], [eout[0]]);
+                    else           prop.setTemporalEaseAtKey(i, ein, eout);
+                } catch(e){}
+            }
+        }
+    }
+
+    function addShapeLayer(comp, name) {
+        var s = comp.layers.addShape();
+        s.name = LAYER_PREFIX + name;
+        return s;
+    }
+
+    // Helper: add loopOut expression with cycle behaviour
+    function setLoopExpression(prop, mode) {
+        try { prop.expression = 'loopOut("' + (mode || "cycle") + '")'; } catch(e) {}
+    }
+
+    // Returns the effective "tail" time: t0 + cycle (when loop, we add a reset key here)
+    function tailTime(t0, opts) {
+        return t0 + (opts.cycle || (opts.duration || 1));
+    }
+
+    // ============================================================
+    // ANIMATION FUNCTIONS
+    // ============================================================
+
+    // 1) POP IN
+    function anim_PopIn(layer, opts, t0) {
+        var dur = opts.duration;
+        var overshoot = opts.overshoot;
+        var scale = layer.property("Transform").property("Scale");
+        var opacity = layer.property("Transform").property("Opacity");
+        var s0 = scale.value;
+
+        scale.setValueAtTime(t0,             [0, 0]);
+        scale.setValueAtTime(t0 + dur * 0.6, [s0[0] * overshoot / 100, s0[1] * overshoot / 100]);
+        scale.setValueAtTime(t0 + dur,       s0);
+
+        opacity.setValueAtTime(t0,            0);
+        opacity.setValueAtTime(t0 + dur*0.5,  100);
+        opacity.setValueAtTime(t0 + dur,      100);
+
+        if (opts.loop) {
+            // Reset to [0,0] / 0 at tail so loopOut cycles back to start state
+            var tail = tailTime(t0, opts);
+            scale.setValueAtTime(tail,   [0, 0]);
+            opacity.setValueAtTime(tail, 0);
+            applyEasingToProp(scale,   opts.easing);
+            applyEasingToProp(opacity, opts.easing);
+            setLoopExpression(scale,   "cycle");
+            setLoopExpression(opacity, "cycle");
+        } else {
+            applyEasingToProp(scale,   opts.easing);
+            applyEasingToProp(opacity, opts.easing);
+        }
+    }
+
+    // 2) FADE IN / OUT
+    function anim_Fade(layer, opts, t0) {
+                if (opts.loop && opts.fadeOut <= 0) {
+            opts.fadeOut = 0.1;
+        }
+
+        var inDur  = opts.fadeIn;
+        var hold   = opts.hold;
+        var outDur = opts.fadeOut;
+        var opacity = layer.property("Transform").property("Opacity");
+
+        opacity.setValueAtTime(t0, 0);
+        opacity.setValueAtTime(t0 + inDur, 100);
+        opacity.setValueAtTime(t0 + inDur + hold, 100);
+        if (outDur > 0)
+            opacity.setValueAtTime(t0 + inDur + hold + outDur, 0);
+
+        applyEasingToProp(opacity, opts.easing);
+
+        if (opts.loop) {
+            // Cycle covers entire fade-in + hold + fade-out; loopOut handles repetition.
+            setLoopExpression(opacity, "cycle");
+        }
+    }
+
+    // 3) SLIDE IN
+    function anim_SlideIn(layer, opts, t0) {
+        var dur = opts.duration;
+        var dist = opts.distance;
+        var dir = opts.direction;
+        var pos = layer.property("Transform").property("Position");
+        var opacity = layer.property("Transform").property("Opacity");
+        var p1 = pos.value;
+        var p0 = [p1[0], p1[1]];
+        if (dir === "left")   p0[0] -= dist;
+        if (dir === "right")  p0[0] += dist;
+        if (dir === "top")    p0[1] -= dist;
+        if (dir === "bottom") p0[1] += dist;
+
+        pos.setValueAtTime(t0,        p0);
+        pos.setValueAtTime(t0 + dur,  p1);
+        opacity.setValueAtTime(t0,            0);
+        opacity.setValueAtTime(t0 + dur*0.5,  100);
+        opacity.setValueAtTime(t0 + dur,      100);
+
+        if (opts.loop) {
+            var tail = tailTime(t0, opts);
+            pos.setValueAtTime(tail, p0);
+            opacity.setValueAtTime(tail, 0);
+            setLoopExpression(pos, "cycle");
+            setLoopExpression(opacity, "cycle");
+        }
+        applyEasingToProp(pos, opts.easing);
+        applyEasingToProp(opacity, opts.easing);
+    }
+
+    // 4) GLITCH REVEAL — HOLD keyframes for flicker; loop = add reset block at tail
+    function anim_GlitchReveal(layer, opts, t0) {
+        var dur = opts.duration;
+        var amp = opts.amount;
+        var opacity = layer.property("Transform").property("Opacity");
+        var pos = layer.property("Transform").property("Position");
+        var p = pos.value;
+
+        var steps = 8;
+        for (var i = 0; i <= steps; i++) {
+            var t = t0 + dur * (i / steps);
+            var v = (i === steps) ? 100 : (Math.random() < 0.5 ? 0 : 100);
+            opacity.setValueAtTime(t, v);
+        }
+        for (var k = 0; k <= steps; k++) {
+            var tt = t0 + dur * (k / steps);
+            var off = (k === steps)
+                ? p
+                : [p[0] + (Math.random() - 0.5) * amp * 2, p[1] + (Math.random() - 0.5) * amp * 0.5];
+            pos.setValueAtTime(tt, off);
+        }
+        // HOLD interpolation for all glitch keys
+        for (var m = 1; m <= opacity.numKeys; m++)
+            opacity.setInterpolationTypeAtKey(m, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+        for (var n = 1; n <= pos.numKeys; n++)
+            pos.setInterpolationTypeAtKey(n, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+
+        if (opts.loop) {
+            var tail = tailTime(t0, opts);
+            // Need an extra key BEFORE tail to start the next cycle correctly
+            opacity.setValueAtTime(tail - 0.001, 100);
+            opacity.setValueAtTime(tail, 0);
+            pos.setValueAtTime(tail, p);
+            opacity.setInterpolationTypeAtKey(opacity.numKeys,   KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+            opacity.setInterpolationTypeAtKey(opacity.numKeys-1, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+            pos.setInterpolationTypeAtKey(pos.numKeys, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+            setLoopExpression(opacity, "cycle");
+            setLoopExpression(pos, "cycle");
+        }
+    }
+
+    // 5) BOUNCE — already cyclic by design
+    function anim_Bounce(layer, opts, t0) {
+        var dur = opts.duration;
+        var amount = opts.amount;
+        var scale = layer.property("Transform").property("Scale");
+        var s0 = scale.value;
+        var sHi = [s0[0] * amount / 100, s0[1] * amount / 100];
+
+        scale.setValueAtTime(t0,             s0);
+        scale.setValueAtTime(t0 + dur * 0.5, sHi);
+        scale.setValueAtTime(t0 + dur,       s0);
+
+        applyEasingToProp(scale, opts.easing);
+        if (opts.loop) setLoopExpression(scale, "cycle");
+    }
+
+    // 6) SHAKE / JITTER — wiggle expression
+    function anim_Shake(layer, opts, t0) {
+        var pos = layer.property("Transform").property("Position");
+        var freq = opts.frequency;
+        var amp  = opts.amplitude;
+        var dur  = opts.duration;
+        var expr;
+        if (opts.loop) {
+            // unconditional wiggle until further notice (continuous shake)
+            expr = "wiggle(" + freq + ", " + amp + ")";
+        } else {
+            expr =
+                "var t0 = " + t0.toFixed(3) + ";\n" +
+                "var dur = " + dur.toFixed(3) + ";\n" +
+                "if (time >= t0 && time <= t0 + dur) { wiggle(" + freq + ", " + amp + "); } else { value; }";
+        }
+        try { pos.expression = expr; } catch(e) {}
+    }
+
+    // 7) SLASH LINES
+    function anim_SlashLines(layer, opts, t0) {
+        var comp = layer.containingComp;
+        var count = opts.count;
+        var thickness = opts.thickness;
+        var color = opts.color;
+        var dur = opts.duration;
+
+        var rect = {width: comp.width, height: comp.height};
+        try { rect = layer.sourceRectAtTime(comp.time, false); } catch(e) {}
+        var pos = layer.property("Transform").property("Position").value;
+        var cx = pos[0], cy = pos[1];
+        var spanW = Math.max(rect.width * 1.5, comp.width * 0.6);
+        var spanH = Math.max(rect.height * 1.2, 100);
+
+        var shape = addShapeLayer(comp, "Slash_" + layer.name);
+        shape.moveBefore(layer);
+
+        var contents = shape.property("ADBE Root Vectors Group");
+        var groupRefs = [];
+        for (var i = 0; i < count; i++) {
+            var grp = contents.addProperty("ADBE Vector Group");
+            grp.name = "Line_" + (i + 1);
+            var inner = grp.property("ADBE Vectors Group");
+
+            var rectPath = inner.addProperty("ADBE Vector Shape - Rect");
+            rectPath.property("Size").setValue([spanW, thickness]);
+            var yOff = (Math.random() - 0.5) * spanH;
+            rectPath.property("Position").setValue([0, yOff]);
+
+            var fill = inner.addProperty("ADBE Vector Graphic - Fill");
+            fill.property("Color").setValue(color);
+
+            var grpTr = grp.property("ADBE Vector Transform Group");
+            var grpPos = grpTr.property("ADBE Vector Position");
+            var grpOp  = grpTr.property("ADBE Vector Group Opacity");
+            var startX = -spanW, endX = spanW;
+
+            grpPos.setValueAtTime(t0,         [startX, 0]);
+            grpPos.setValueAtTime(t0 + dur,   [endX,   0]);
+            grpOp.setValueAtTime(t0,          0);
+            grpOp.setValueAtTime(t0 + dur*0.2, 100);
+            grpOp.setValueAtTime(t0 + dur*0.8, 100);
+            grpOp.setValueAtTime(t0 + dur,    0);
+
+            applyEasingToProp(grpPos, opts.easing);
+            applyEasingToProp(grpOp,  opts.easing);
+
+            groupRefs.push({pos: grpPos, op: grpOp});
+        }
+
+        shape.property("Transform").property("Position").setValue([cx, cy]);
+
+        if (opts.loop) {
+            var tail = tailTime(t0, opts);
+            // Loop on shape's master Opacity makes whole layer cycle
+            var layerOp = shape.property("Transform").property("Opacity");
+            layerOp.setValueAtTime(t0,   100);
+            layerOp.setValueAtTime(tail, 100);
+            for (var g = 0; g < groupRefs.length; g++) {
+                setLoopExpression(groupRefs[g].pos, "cycle");
+                setLoopExpression(groupRefs[g].op,  "cycle");
+            }
+        }
+    }
+
+    // 8) PULSE GLOW
+    function anim_PulseGlow(layer, opts, t0) {
+        var dur = opts.duration;
+        var maxI = opts.intensity;
+        var radius = opts.radius;
+        var glow;
+        try { glow = layer.property("ADBE Effect Parade").addProperty("ADBE Glo2"); }
+        catch(e) { alert("Could not add Glow to '" + layer.name + "'."); return; }
+        try { glow.property("Glow Radius").setValue(radius); } catch(e){}
+
+        var inten = glow.property("Glow Intensity");
+        inten.setValueAtTime(t0,             0.2);
+        inten.setValueAtTime(t0 + dur*0.5,   maxI);
+        inten.setValueAtTime(t0 + dur,       0.2);
+
+        applyEasingToProp(inten, opts.easing);
+        if (opts.loop) setLoopExpression(inten, "cycle");
+    }
+    // 9) RIPPLE / STAGGER — applies Pop-In to multiple layers with delay from a chosen origin
+    // Note: this animation IGNORES the per-layer apply loop and processes the whole selection at once.
+    function anim_Ripple(layer, opts, t0, ctx) {
+        // ctx contains: { allLayers: [...], index: i }
+        // Only run once — when index === 0
+        if (ctx.index !== 0) return;
+
+        var layers = ctx.allLayers;
+        var n = layers.length;
+        if (n < 1) return;
+
+        // Compute origin position
+        var origin = [0, 0];
+        if (opts.origin === "center") {
+            var sumX = 0, sumY = 0;
+            for (var i = 0; i < n; i++) {
+                var p = layers[i].property("Transform").property("Position").value;
+                sumX += p[0]; sumY += p[1];
+            }
+            origin = [sumX / n, sumY / n];
+        } else if (opts.origin === "left") {
+            var minX = 1e9, yAvg = 0;
+            for (var j = 0; j < n; j++) {
+                var pp = layers[j].property("Transform").property("Position").value;
+                if (pp[0] < minX) minX = pp[0];
+                yAvg += pp[1];
+            }
+            origin = [minX, yAvg / n];
+        } else if (opts.origin === "right") {
+            var maxX = -1e9, yA = 0;
+            for (var k = 0; k < n; k++) {
+                var pk = layers[k].property("Transform").property("Position").value;
+                if (pk[0] > maxX) maxX = pk[0];
+                yA += pk[1];
+            }
+            origin = [maxX, yA / n];
+        } else if (opts.origin === "first") {
+            origin = layers[0].property("Transform").property("Position").value;
+        }
+
+        // Build distance list
+        var distances = [];
+        var maxDist = 0;
+        for (var m = 0; m < n; m++) {
+            var pm = layers[m].property("Transform").property("Position").value;
+            var dx = pm[0] - origin[0], dy = pm[1] - origin[1];
+            var d = Math.sqrt(dx * dx + dy * dy);
+            distances.push(d);
+            if (d > maxDist) maxDist = d;
+        }
+
+        var totalStagger = opts.stagger * (n - 1); // last-layer delay (use index-based fallback)
+
+        for (var idx = 0; idx < n; idx++) {
+            var lyr = layers[idx];
+            var delay;
+            if (opts.mode === "distance" && maxDist > 0) {
+                delay = (distances[idx] / maxDist) * totalStagger;
+            } else {
+                delay = idx * opts.stagger; // index-based ordering
+            }
+
+            var localT0 = t0 + delay;
+            var subOpts = {
+                duration: opts.duration,
+                overshoot: opts.overshoot,
+                easing: opts.easing,
+                loop: false
+            };
+            anim_PopIn(lyr, subOpts, localT0);
+        }
+
+        if (opts.loop) {
+            // Add reset+restart pattern by writing scale/opacity keys at tail per layer
+            var tailGlobal = t0 + opts.cycle;
+            for (var q = 0; q < n; q++) {
+                var lq = layers[q];
+                var sc = lq.property("Transform").property("Scale");
+                var op = lq.property("Transform").property("Opacity");
+             
+                sc.setValueAtTime(tailGlobal, [0, 0]);
+                op.setValueAtTime(tailGlobal, 0);
+                applyEasingToProp(sc, opts.easing);
+                applyEasingToProp(op, opts.easing);
+                setLoopExpression(sc, "cycle");
+                setLoopExpression(op, "cycle");
+            }
+        }
+    }
+
+    // 10) CHROMATIC ABERRATION — duplicates layer x3 with RGB channel isolation + animated offset
+    function anim_ChromaticAberration(layer, opts, t0) {
+        var comp = layer.containingComp;
+        var dur = opts.duration;
+        var amount = opts.amount; // px peak offset
+        var maxOpacity = opts.maxOpacity; // %
+
+        // Create two duplicates: Red (offset -X) and Blue (offset +X)
+        var redDup  = layer.duplicate();
+        redDup.name  = LAYER_PREFIX + "Chroma_R_" + layer.name;
+        var blueDup = layer.duplicate();
+        blueDup.name = LAYER_PREFIX + "Chroma_B_" + layer.name;
+
+        // Add Set Channels effect to isolate channels
+        function isolateChannel(lyr, channel) {
+            var sc;
+            try { sc = lyr.property("ADBE Effect Parade").addProperty("ADBE Shift Channels"); } catch(e) { return; }
+            // matchNames for Shift Channels:
+            // "ADBE Shift Channels-0001" Take Alpha From
+            // "ADBE Shift Channels-0002" Take Red From
+            // "ADBE Shift Channels-0003" Take Green From
+            // "ADBE Shift Channels-0004" Take Blue From
+            // Source values: 0=Full On, 1=Full Off, 2=Alpha, 3=Luminance, 4=Red, 5=Green, 6=Blue
+            if (channel === "R") {
+                // Keep R, zero G and B
+                sc.property("ADBE Shift Channels-0003").setValue(1); // G = Full Off
+                sc.property("ADBE Shift Channels-0004").setValue(1); // B = Full Off
+            } else if (channel === "B") {
+                sc.property("ADBE Shift Channels-0002").setValue(1); // R = Full Off
+                sc.property("ADBE Shift Channels-0003").setValue(1); // G = Full Off
+            } else if (channel === "G") {
+                sc.property("ADBE Shift Channels-0002").setValue(1);
+                sc.property("ADBE Shift Channels-0004").setValue(1);
+            }
+        }
+
+        isolateChannel(redDup,  "R");
+        isolateChannel(blueDup, "B");
+
+        // Set blend mode to Screen/Add so channels recombine visually
+        try {
+            redDup.blendingMode  = BlendingMode.SCREEN;
+            blueDup.blendingMode = BlendingMode.SCREEN;
+        } catch(e) {}
+
+        // Animate position offset on duplicates
+        function animateOffset(lyr, dirSign) {
+            var pos = lyr.property("Transform").property("Position");
+            var op  = lyr.property("Transform").property("Opacity");
+            var p0  = pos.value;
+
+            pos.setValueAtTime(t0,             p0);
+            pos.setValueAtTime(t0 + dur * 0.5, [p0[0] + dirSign * amount, p0[1]]);
+            pos.setValueAtTime(t0 + dur,       p0);
+
+            op.setValueAtTime(t0,              0);
+            op.setValueAtTime(t0 + dur * 0.5,  maxOpacity);
+            op.setValueAtTime(t0 + dur,        0);
+
+            applyEasingToProp(pos, opts.easing);
+            applyEasingToProp(op,  opts.easing);
+
+            if (opts.loop) {
+                setLoopExpression(pos, "cycle");
+                setLoopExpression(op,  "cycle");
+            }
+        }
+
+        animateOffset(redDup,  -1);
+        animateOffset(blueDup, +1);
+
+        // Z-order: duplicates above original so SCREEN blending shows
+        redDup.moveBefore(layer);
+        blueDup.moveBefore(layer);
+    }
+
+    // ============================================================
+    // ANIMATIONS REGISTRY
+    // ============================================================
+    var ANIMATIONS = [
+        {
+            name: "Pop In",
+            apply: anim_PopIn,
+            defaults: { duration: 0.4, overshoot: 110, easing: "Ease Out Back", loop: false, cycle: 1.5 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.05, 2.0, state.duration, 0.01, function(v){ state.duration = v; });
+                addSlider(panel, "Overshoot (%)", 100, 150, state.overshoot, 1, function(v){ state.overshoot = v; });
+            }
+        },
+        {
+            name: "Fade In/Out",
+            apply: anim_Fade,
+            defaults: { fadeIn: 0.4, hold: 1.0, fadeOut: 0.4, easing: "Ease In/Out", loop: false, cycle: 2.0 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Fade In (s)",  0.0, 3.0, state.fadeIn,  0.05, function(v){ state.fadeIn = v; });
+                addSlider(panel, "Hold (s)",     0.0, 5.0, state.hold,    0.05, function(v){ state.hold = v; });
+                addSlider(panel, "Fade Out (s)", 0.0, 3.0, state.fadeOut, 0.05, function(v){ state.fadeOut = v; });
+            }
+        },
+        {
+            name: "Slide In",
+            apply: anim_SlideIn,
+            defaults: { duration: 0.5, distance: 300, direction: "left", easing: "Ease Out", loop: false, cycle: 1.5 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.1, 2.0, state.duration, 0.05, function(v){ state.duration = v; });
+                addSlider(panel, "Distance (px)", 50, 1000, state.distance, 10, function(v){ state.distance = v; });
+                var grp = panel.add("group"); grp.orientation = "row";
+                var lbl = grp.add("statictext", undefined, "From:"); lbl.preferredSize.width = 110;
+                var dd = grp.add("dropdownlist", undefined, ["left","right","top","bottom"]);
+                dd.selection = dd.find(state.direction) || dd.items[0];
+                dd.onChange = function(){ state.direction = dd.selection.text; };
+            }
+        },
+        {
+            name: "Glitch Reveal",
+            apply: anim_GlitchReveal,
+            defaults: { duration: 0.5, amount: 15, easing: "Linear", loop: false, cycle: 1.5 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.1, 2.0, state.duration, 0.05, function(v){ state.duration = v; });
+                addSlider(panel, "Jitter (px)",  0, 60, state.amount, 1, function(v){ state.amount = v; });
+            }
+        },
+        {
+            name: "Bounce",
+            apply: anim_Bounce,
+            defaults: { duration: 0.6, amount: 115, easing: "Ease In/Out", loop: true, cycle: 0.6 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.1, 3.0, state.duration, 0.05, function(v){ state.duration = v; });
+                addSlider(panel, "Amount (%)", 100, 150, state.amount, 1, function(v){ state.amount = v; });
+            }
+        },
+        {
+            name: "Shake / Jitter",
+            apply: anim_Shake,
+            defaults: { duration: 1.0, frequency: 8, amplitude: 10, easing: "Linear", loop: false, cycle: 1.0 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.1, 10.0, state.duration, 0.1, function(v){ state.duration = v; });
+                addSlider(panel, "Frequency (Hz)", 1, 30, state.frequency, 1, function(v){ state.frequency = v; });
+                addSlider(panel, "Amplitude (px)", 1, 50, state.amplitude, 1, function(v){ state.amplitude = v; });
+            }
+        },
+        {
+            name: "Slash Lines",
+            apply: anim_SlashLines,
+            defaults: { duration: 0.4, count: 4, thickness: 3, color: [1, 0, 0], easing: "Linear", loop: false, cycle: 1.0 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.1, 2.0, state.duration, 0.05, function(v){ state.duration = v; });
+                addSlider(panel, "Lines", 1, 10, state.count, 1, function(v){ state.count = Math.round(v); });
+                addSlider(panel, "Thickness (px)", 1, 15, state.thickness, 1, function(v){ state.thickness = v; });
+                addColor(panel, "Color", state.color, function(v){ state.color = v; });
+            }
+        },
+        {
+            name: "Pulse Glow",
+            apply: anim_PulseGlow,
+            defaults: { duration: 0.8, intensity: 1.2, radius: 25, easing: "Ease In/Out", loop: true, cycle: 0.8 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.1, 3.0, state.duration, 0.05, function(v){ state.duration = v; });
+                addSlider(panel, "Intensity",    0.2, 3.0, state.intensity, 0.1, function(v){ state.intensity = v; });
+                addSlider(panel, "Radius (px)",  5, 100, state.radius, 1, function(v){ state.radius = v; });
+            }
+        }
+            ,
+        {
+            name: "Ripple / Stagger",
+            apply: anim_Ripple,
+            isMulti: true, // signals that apply() handles whole selection itself
+            defaults: { duration: 0.4, overshoot: 110, stagger: 0.05, origin: "center", mode: "distance", easing: "Ease Out Back", loop: false, cycle: 2.0 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.05, 2.0, state.duration, 0.01, function(v){ state.duration = v; });
+                addSlider(panel, "Overshoot (%)", 100, 150, state.overshoot, 1, function(v){ state.overshoot = v; });
+                addSlider(panel, "Stagger (s)", 0.0, 0.5, state.stagger, 0.01, function(v){ state.stagger = v; });
+                var g1 = panel.add("group"); g1.orientation = "row";
+                var l1 = g1.add("statictext", undefined, "Origin:"); l1.preferredSize.width = 110;
+                var dd1 = g1.add("dropdownlist", undefined, ["center", "left", "right", "first"]);
+                dd1.selection = dd1.find(state.origin) || dd1.items[0];
+                dd1.onChange = function(){ state.origin = dd1.selection.text; };
+                var g2 = panel.add("group"); g2.orientation = "row";
+                var l2 = g2.add("statictext", undefined, "Mode:"); l2.preferredSize.width = 110;
+                var dd2 = g2.add("dropdownlist", undefined, ["distance", "index"]);
+                dd2.selection = dd2.find(state.mode) || dd2.items[0];
+                dd2.onChange = function(){ state.mode = dd2.selection.text; };
+            }
+        },
+        {
+            name: "Chromatic Aberration",
+            apply: anim_ChromaticAberration,
+            defaults: { duration: 0.3, amount: 8, maxOpacity: 60, easing: "Linear", loop: false, cycle: 1.5 },
+            buildParams: function (panel, state) {
+                addSlider(panel, "Duration (s)", 0.05, 2.0, state.duration, 0.01, function(v){ state.duration = v; });
+                addSlider(panel, "Offset (px)", 1, 40, state.amount, 1, function(v){ state.amount = v; });
+                addSlider(panel, "Max Opacity (%)", 10, 100, state.maxOpacity, 5, function(v){ state.maxOpacity = v; });
+            }
+        }
+];
+
+    // ============================================================
+    // UI HELPERS
+    // ============================================================
+    function addSlider(parent, label, mn, mx, val, step, onChange) {
+        var row = parent.add("group");
+        row.orientation = "row";
+        row.alignment = ["fill","top"];
+        var lbl = row.add("statictext", undefined, label + ":");
+        lbl.preferredSize.width = 110;
+        var sld = row.add("slider", undefined, val, mn, mx);
+        sld.preferredSize.width = 130;
+        var box = row.add("edittext", undefined, (step >= 1) ? String(val) : Number(val).toFixed(2));
+        box.preferredSize.width = 50;
+        sld.onChanging = function(){
+            var v = (step >= 1) ? Math.round(sld.value) : Math.round(sld.value/step)*step;
+            box.text = (step >= 1) ? String(v) : v.toFixed(2);
+            onChange(v);
+        };
+        box.onChange = function(){
+            var v = parseFloat(box.text);
+            if (isNaN(v)) return;
+            v = clamp(v, mn, mx);
+            sld.value = v;
+            box.text = (step >= 1) ? String(Math.round(v)) : v.toFixed(2);
+            onChange(v);
+        };
+    }
+
+    function addColor(parent, label, val, onChange) {
+        var row = parent.add("group");
+        row.orientation = "row";
+        var lbl = row.add("statictext", undefined, label + ":");
+        lbl.preferredSize.width = 110;
+        var sw = row.add("button", undefined, "");
+        sw.preferredSize = [40, 22];
+        sw.fillBrush = sw.graphics.newBrush(sw.graphics.BrushType.SOLID_COLOR, val);
+        sw.onDraw = function(){
+            sw.graphics.rectPath(0, 0, sw.size[0], sw.size[1]);
+            sw.graphics.fillPath(sw.fillBrush);
+        };
+        sw.onClick = function(){
+            var c = $.colorPicker();
+            if (c < 0) return;
+            var r = ((c >> 16) & 0xFF)/255;
+            var g = ((c >> 8)  & 0xFF)/255;
+            var b = (c & 0xFF)/255;
+            val = [r,g,b];
+            sw.fillBrush = sw.graphics.newBrush(sw.graphics.BrushType.SOLID_COLOR, val);
+            sw.notify("onDraw");
+            onChange(val);
+        };
+    }
+
+    function divider(parent) {
+        var d = parent.add("panel");
+        d.alignment = ["fill","top"];
+        d.preferredSize.height = 2;
+    }
+
+    // ============================================================
+    // MAIN UI
+    // ============================================================
+    function buildUI(thisObj) {
+        var w = (thisObj instanceof Panel)
+            ? thisObj
+            : new Window("palette", SCRIPT_NAME + " " + SCRIPT_VERSION, undefined, {resizeable:true});
+        w.orientation = "column";
+        w.alignChildren = ["fill","top"];
+        w.spacing = 6;
+        w.margins = 10;
+        w.preferredSize.width = 340;
+
+
+        var title = w.add("statictext", undefined, SCRIPT_NAME + "  " + SCRIPT_VERSION);
+        title.graphics.foregroundColor = title.graphics.newPen(title.graphics.PenType.SOLID_COLOR, COL.accent, 1);
+
+        // Animation selector
+        var modeRow = w.add("group");
+        modeRow.orientation = "row";
+        var ml = modeRow.add("statictext", undefined, "Animation:"); ml.preferredSize.width = 70;
+        var dd = modeRow.add("dropdownlist", undefined, []);
+        for (var i = 0; i < ANIMATIONS.length; i++) dd.add("item", ANIMATIONS[i].name);
+        dd.selection = 0;
+        dd.preferredSize.width = 160;
+
+        // Easing selector
+        var easeRow = w.add("group");
+        easeRow.orientation = "row";
+        var el = easeRow.add("statictext", undefined, "Easing:"); el.preferredSize.width = 70;
+        var ddEase = easeRow.add("dropdownlist", undefined, EASING_NAMES);
+        ddEase.selection = 1; // Ease Out default
+        ddEase.preferredSize.width = 160;
+
+        divider(w);
+
+        var paramsPanel = w.add("group");
+        paramsPanel.orientation = "column";
+        paramsPanel.alignChildren = ["fill","top"];
+
+        var states = [];
+        for (var s = 0; s < ANIMATIONS.length; s++) {
+            var st = {};
+            for (var key in ANIMATIONS[s].defaults) st[key] = ANIMATIONS[s].defaults[key];
+            states.push(st);
+        }
+
+        function rebuildParams() {
+            while (paramsPanel.children.length > 0) paramsPanel.remove(paramsPanel.children[0]);
+            var idx = dd.selection.index;
+            ANIMATIONS[idx].buildParams(paramsPanel, states[idx]);
+
+            // sync easing dropdown with state
+            var foundEase = ddEase.find(states[idx].easing);
+            if (foundEase) ddEase.selection = foundEase;
+
+            // Loop checkbox + cycle slider
+            var loopRow = paramsPanel.add("group");
+            loopRow.orientation = "row";
+            var llabel = loopRow.add("statictext", undefined, "Loop:"); llabel.preferredSize.width = 110;
+            var lp = loopRow.add("checkbox", undefined, "Cycle");
+            lp.value = !!states[idx].loop;
+
+                   var cycleGrp = paramsPanel.add("group");
+            cycleGrp.orientation = "column";
+            cycleGrp.alignChildren = ["fill","top"];
+            cycleGrp.visible = lp.value;
+            addSlider(cycleGrp, "Cycle Length (s)", 0.2, 10.0, states[idx].cycle, 0.05, function(v){ states[idx].cycle = v; });
+
+            lp.onClick = function(){
+                states[idx].loop = lp.value;
+                cycleGrp.visible = lp.value;
+                w.layout.layout(true);
+            };
+
+
+            w.layout.layout(true);
+        }
+
+        dd.onChange = rebuildParams;
+        ddEase.onChange = function(){
+            var idx = dd.selection.index;
+            states[idx].easing = ddEase.selection.text;
+        };
+        rebuildParams();
+
+        divider(w);
+
+                var btnRow = w.add("group");
+        btnRow.orientation = "row";
+        var btnApply = btnRow.add("button", undefined, "Apply to Selection");
+        btnApply.preferredSize.height = 30;
+        var btnClear = btnRow.add("button", undefined, "Clear ANNY_");
+        btnClear.preferredSize.height = 30;
+        btnClear.preferredSize.width = 90;
+        var btnHelp = btnRow.add("button", undefined, "?");
+        btnHelp.preferredSize.width = 28;
+
+
+                btnApply.onClick = function(){
+            var comp = getComp(); if (!comp) return;
+            var sel = getSelLayers(); if (sel.length === 0) return;
+            var idx = dd.selection.index;
+            var anim = ANIMATIONS[idx];
+            var opts = states[idx];
+            var t0 = comp.time;
+
+            app.beginUndoGroup(SCRIPT_NAME + ": " + anim.name);
+            try {
+                if (anim.isMulti) {
+                    // Multi-layer animation: call once with whole selection
+                    for (var i = 0; i < sel.length; i++) {
+                        anim.apply(sel[i], opts, t0, { allLayers: sel, index: i });
+                    }
+                } else {
+                    for (var j = 0; j < sel.length; j++) anim.apply(sel[j], opts, t0);
+                }
+            } catch(err) {
+                alert("Error: " + err.toString());
+            }
+            app.endUndoGroup();
+        };
+
+                btnClear.onClick = function(){
+            var comp = getComp(); if (!comp) return;
+            app.beginUndoGroup(SCRIPT_NAME + ": Clear ANNY_");
+            try {
+                // 1) Удалить все слои с префиксом ANNY_
+                var removed = 0;
+                for (var i = comp.numLayers; i >= 1; i--) {
+                    var L = comp.layer(i);
+                    if (L.name && L.name.indexOf(LAYER_PREFIX) === 0) {
+                        try { L.remove(); removed++; } catch(e){}
+                    }
+                }
+                // 2) Снять wiggle/loopOut выражения с Position/Opacity/Scale
+                //    выделенных слоёв
+                var sel = comp.selectedLayers;
+                var exprsCleared = 0;
+                for (var s = 0; s < sel.length; s++) {
+                    var propNames = ["Position", "Opacity", "Scale"];
+                    for (var p = 0; p < propNames.length; p++) {
+                        try {
+                            var pr = sel[s].property("Transform").property(propNames[p]);
+                            if (pr && pr.expression && pr.expression.length > 0) {
+                                pr.expression = "";
+                                exprsCleared++;
+                            }
+                        } catch(e){}
+                    }
+                }
+                alert("Удалено " + removed + " слой(ёв), очищено " + exprsCleared + " выражений.");
+            } catch(err) {
+                alert("Clear error: " + err.toString());
+            }
+            app.endUndoGroup();
+        };
+
+
+
+        btnHelp.onClick = function(){ alert(getHelpText()); };
+
+        if (w instanceof Window) { w.center(); w.show(); }
+        else { w.layout.layout(true); w.layout.resize(); }
+        return w;
+    }
+
+    function getHelpText() {
+        return SCRIPT_NAME + " " + SCRIPT_VERSION + "\n\n" +
+            "УНИВЕРСАЛЬНАЯ БИБЛИОТЕКА АНИМАЦИЙ\n" +
+            "10 пресетов, применяются к любому выделенному слою.\n\n" +
+            "КАК ПОЛЬЗОВАТЬСЯ:\n" +
+            "  1. Выдели один или несколько слоёв.\n" +
+            "  2. Установи маркер времени (CTI) в точку старта анимации.\n" +
+            "  3. Выбери Animation + Easing.\n" +
+            "  4. Включи Loop, если нужен циклический повтор.\n" +
+            "  5. Нажми Apply to Selection.\n\n" +
+            "АНИМАЦИИ:\n" +
+            "  Pop In        — появление с overshoot (мягкий отскок).\n" +
+            "  Fade In/Out   — плавное появление, пауза, исчезание.\n" +
+            "  Slide In      — въезд из-за края (left/right/top/bottom).\n" +
+            "  Glitch Reveal — рваное появление с горизонтальными сдвигами.\n" +
+            "  Bounce        — пружинистая пульсация Scale.\n" +
+            "  Shake         — тряска через wiggle-выражение.\n" +
+            "  Slash Lines   — быстрые полосы, пролетающие поверх слоя (для\n" +
+            "                  ударов, вспышек). Aux-слой ANNY_Slash_*.\n" +
+            "  Pulse Glow    — пульсирующее свечение через Glow.\n" +
+            "  Ripple        — волна анимации по нескольким слоям со сдвигом\n" +
+            "                  по времени (stagger).\n" +
+            "  Chromatic Ab. — RGB-разбиение цветовых каналов (glitch/VHS).\n" +
+            "                  Aux-слои ANNY_Chroma_R_* и ANNY_Chroma_B_*.\n\n" +
+            "EASING:\n" +
+            "  Linear        — постоянная скорость (для механики, глитча).\n" +
+            "  Ease Out      — быстрый старт, мягкое торможение (появления).\n" +
+            "  Ease In/Out   — плавно в обе стороны (пульсации, дыхание).\n" +
+            "  Ease Out Back — с перелётом (overshoot) в конце.\n\n" +
+            "LOOP:\n" +
+            "  Если включено, анимация зациклится с интервалом Cycle Length.\n" +
+            "  - Появления (Pop In, Slide In, Glitch) — reset в конце цикла.\n" +
+            "  - Bounce / Pulse Glow — их родной цикл через loopOut.\n" +
+            "  - Shake — становится вечным wiggle-выражением.\n\n" +
+            "ВСПОМОГАТЕЛЬНЫЕ СЛОИ:\n" +
+            "  Некоторые эффекты создают доп. слои с префиксом '" + LAYER_PREFIX + "'.\n" +
+            "  Нажми 'Clear ANNY_' чтобы удалить их все + снять wiggle-\n" +
+            "  выражения с Position выделенных слоёв.\n\n" +
+            "МУЛЬТИ-СЛОЙ:\n" +
+            "  Все анимации кроме Ripple применяются к каждому слою одинаково.\n" +
+            "  Ripple специально распределяет анимацию с задержкой по слоям.\n\n" +
+            "ОГРАНИЧЕНИЯ:\n" +
+            "  - Fade Out = 0 + Loop → Opacity зависнет на 100. Установи хотя\n" +
+            "    бы 0.05 с для корректного цикла.\n" +
+            "  - Shake с Loop не имеет автоматического выхода — очищай\n" +
+            "    выражение вручную или через Clear ANNY_.\n" +
+            "  - Undo (Ctrl+Z) откатывает применение полностью.";
+    }
+
+
+    buildUI(thisObj);
+
+})(this);
