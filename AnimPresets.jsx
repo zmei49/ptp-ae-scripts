@@ -1,11 +1,21 @@
 // ptp_AnimPresets.jsx v1.0.1 — PART 1 (fixed)
 
+
 (function ptp_AnimPresets(thisObj) {
 
     var SCRIPT_NAME = "ptp_AnimPresets";
-    var SCRIPT_VERSION = "v1.0.1";
+    var SCRIPT_VERSION = "v1.0.2";
     var LAYER_PREFIX = "AP_";
-
+// v1.0.2 changelog:
+//   • Fix: Tint colors без alpha в Glitch Pop-In (RGB split)
+//   • Fix: MicroJitter больше не даёт двойного смещения по X/Y
+//   • Fix: Concentric Arcs Trim свойства через matchName (не англ.-only)
+//   • Fix: Aura Circle Ramp свойства через индексы (не англ.-only)
+//   • Fix: Glow Pulse с fallback matchName + display name
+//   • Cleanup: убраны draft-версии Shimmer expression
+//   • Cleanup: убраны битые попытки менять nStart.source.width
+//   • Help: добавлены разделы Aura Circle, Drag Inertia, COMMON,
+//           предупреждение о Light Sweep alpha matte
     var COL_ACCENT = [1.0, 0.55, 0.15];
 
     // ---------- UTILS ----------
@@ -137,8 +147,9 @@
         redCopy.name = LAYER_PREFIX + "Glitch_R_" + layer.name;
         try {
             var eR = redCopy.property("Effects").addProperty("ADBE Tint");
-            eR.property(2).setValue([1, 0.15, 0.15, 1]);  // Map White To — по индексу
-            eR.property(1).setValue([0, 0, 0, 1]);        // Map Black To
+            eR.property(2).setValue([1, 0.15, 0.15]);
+eR.property(1).setValue([0, 0, 0]);
+
         } catch (e) { }
         redCopy.blendingMode = BlendingMode.ADD;
         redCopy.property("Transform").property("Position").setValue([pos[0] + offX, pos[1]]);
@@ -153,8 +164,8 @@
         cyanCopy.name = LAYER_PREFIX + "Glitch_C_" + layer.name;
         try {
             var eC = cyanCopy.property("Effects").addProperty("ADBE Tint");
-            eC.property(2).setValue([0.15, 0.9, 1, 1]);
-            eC.property(1).setValue([0, 0, 0, 1]);
+            eC.property(2).setValue([0.15, 0.9, 1]);
+            eC.property(1).setValue([0, 0, 0]);
         } catch (e) { }
         cyanCopy.blendingMode = BlendingMode.ADD;
         cyanCopy.property("Transform").property("Position").setValue([pos[0] - offX, pos[1]]);
@@ -200,19 +211,38 @@
             setEaseOut(opa);
         }
     }
+        // Приводит подписи из dropdown к каноническим именам фигур
+    function normShape(s){
+        var k = String(s).toLowerCase().replace(/[\s_\-]/g, "");
+        if (k === "l" || k === "lbracket" || k === "bracket" || k === "уголок") return "L-bracket";
+        if (k === "cross" || k === "plus" || k === "pluscross" || k === "+") return "Plus cross";
+        if (k === "x" || k === "xcross" || k === "diag") return "X-cross";
+        if (k === "squarewithinner" || k === "squareinner" || k === "squarefill" ||
+            k === "boxfill" || k === "squaredot") return "Square with inner";
+        if (k === "square" || k === "squarehollow" || k === "rect" ||
+            k === "box" || k === "hollow") return "Square hollow";
+        if (k === "dot" || k === "circledot" || k === "point") return "Circle dot";
+        if (k === "ring" || k === "circle" || k === "circlering") return "Circle ring";
+        return String(s);
+    }
+
 
     // =====================================================
     // PRESET 3: Corner Markers (FIXED — expression-driven)
     // =====================================================
-    function buildMarkerShape(inner, shapeType, size, color) {
+    function buildMarkerShape(inner, shapeType, size, color, strokeW) {
+        if (!strokeW) strokeW = 2;
+        var original = shapeType;
         try {
+            shapeType = normShape(shapeType);
+
             if (shapeType === "Square hollow") {
                 var s1 = inner.addProperty("ADBE Vector Shape - Rect");
                 s1.property("ADBE Vector Rect Size").setValue([size, size]);
                 s1.property("ADBE Vector Rect Position").setValue([0, 0]);
                 var st = inner.addProperty("ADBE Vector Graphic - Stroke");
                 st.property("ADBE Vector Stroke Color").setValue(color);
-                st.property("ADBE Vector Stroke Width").setValue(2);
+                st.property("ADBE Vector Stroke Width").setValue(strokeW);
             }
             else if (shapeType === "Square with inner") {
                 var s1b = inner.addProperty("ADBE Vector Shape - Rect");
@@ -220,7 +250,7 @@
                 s1b.property("ADBE Vector Rect Position").setValue([0, 0]);
                 var st1 = inner.addProperty("ADBE Vector Graphic - Stroke");
                 st1.property("ADBE Vector Stroke Color").setValue(color);
-                st1.property("ADBE Vector Stroke Width").setValue(2);
+                st1.property("ADBE Vector Stroke Width").setValue(strokeW);
                 var sub = inner.addProperty("ADBE Vector Group");
                 sub.name = "InnerFill";
                 var subInner = sub.property("ADBE Vectors Group");
@@ -243,31 +273,51 @@
                 e2.property("ADBE Vector Ellipse Position").setValue([0, 0]);
                 var srg = inner.addProperty("ADBE Vector Graphic - Stroke");
                 srg.property("ADBE Vector Stroke Color").setValue(color);
-                srg.property("ADBE Vector Stroke Width").setValue(2);
+                srg.property("ADBE Vector Stroke Width").setValue(strokeW);
             }
             else if (shapeType === "L-bracket") {
-                addLineShape(inner, "L_h", [-size / 2, -size / 2], [size / 2, -size / 2], color, 2);
-                addLineShape(inner, "L_v", [-size / 2, -size / 2], [-size / 2, size / 2], color, 2);
+                addLineShape(inner, "L_h", [-size / 2, -size / 2], [ size / 2, -size / 2], color, strokeW);
+                addLineShape(inner, "L_v", [-size / 2, -size / 2], [-size / 2,  size / 2], color, strokeW);
             }
             else if (shapeType === "Plus cross") {
-                addLineShape(inner, "P_h", [-size / 2, 0], [size / 2, 0], color, 2);
-                addLineShape(inner, "P_v", [0, -size / 2], [0, size / 2], color, 2);
+                addLineShape(inner, "P_h", [-size / 2, 0], [size / 2, 0], color, strokeW);
+                addLineShape(inner, "P_v", [0, -size / 2], [0, size / 2], color, strokeW);
+            }
+            else if (shapeType === "X-cross") {
+                addLineShape(inner, "X_a", [-size / 2, -size / 2], [ size / 2,  size / 2], color, strokeW);
+                addLineShape(inner, "X_b", [-size / 2,  size / 2], [ size / 2, -size / 2], color, strokeW);
+            }
+            else {
+                // неизвестный тип — рисуем уголок, чтобы группа не осталась пустой
+                addLineShape(inner, "L_h", [-size / 2, -size / 2], [ size / 2, -size / 2], color, strokeW);
+                addLineShape(inner, "L_v", [-size / 2, -size / 2], [-size / 2,  size / 2], color, strokeW);
+                if (!$.global.__ptpShapeWarned) {
+                    $.global.__ptpShapeWarned = true;
+                    alert("Неизвестный тип маркера: \"" + original + "\"\n" +
+                          "Добавь его в normShape() или в buildMarkerShape().");
+                }
             }
         } catch (e) {
-            alert("buildMarkerShape (" + shapeType + "): " + e.toString() + "\nLine: " + e.line);
+            alert("buildMarkerShape (" + original + "): " + e.toString() + "\nLine: " + e.line);
         }
     }
 
 
-    function applyCornerMarkers(layer, comp, params) {
-        var startT = params.startTime;
-        var dur = params.cm_duration;
-        var size = params.cm_size;
-        var padding = params.cm_padding;
-        var color = hexToRGB(params.cm_color);
-        var targetName = layer.name;
 
-        // Create shape layer, parent to target
+        function applyCornerMarkers(layer, comp, params) {
+        var startT  = params.startTime;
+        var dur     = params.cm_duration;
+        var size    = params.cm_size;
+        var padding = params.cm_padding;
+        var color   = hexToRGB(params.cm_color);
+        var looped  = params.gen_looped;
+        var hideEnd = params.cm_hideEnd;
+        var gap     = (params.cm_loopGap === undefined) ? 0 : params.cm_loopGap;
+        var stagger = 0.05;
+
+        // экранируем кавычки/слэши в имени слоя для expression
+        var targetName = String(layer.name).replace(/(['\\])/g, "\\$1");
+
         var sl = comp.layers.addShape();
         sl.name = LAYER_PREFIX + "Corners_" + layer.name;
         try { sl.property("Contents").property(1).remove(); } catch (e) { }
@@ -276,41 +326,30 @@
 
         var corners = [
             { name: "TL", sx: -1, sy: -1, shape: params.cm_midShape1 },
-            { name: "TR", sx: 1, sy: -1, shape: params.cm_midShape2 },
-            { name: "BL", sx: -1, sy: 1, shape: params.cm_midShape3 },
-            { name: "BR", sx: 1, sy: 1, shape: params.cm_midShape4 }
+            { name: "TR", sx:  1, sy: -1, shape: params.cm_midShape2 },
+            { name: "BR", sx:  1, sy:  1, shape: params.cm_midShape3 },
+            { name: "BL", sx: -1, sy:  1, shape: params.cm_midShape4 }
         ];
 
         for (var i = 0; i < 4; i++) {
             try {
                 var c = corners[i];
-
-                // Каждый раз перезапрашиваем root
                 var root = sl.property("Contents");
 
-                // === Wrapper group ===
                 var wrap = root.addProperty("ADBE Vector Group");
                 wrap.name = "Corner_" + c.name;
 
-                // === Start sub-group ===
-                var wrapInnerA = wrap.property("Contents");
-                var startG = wrapInnerA.addProperty("ADBE Vector Group");
+                var startG = wrap.property("Contents").addProperty("ADBE Vector Group");
                 startG.name = "Start";
                 buildMarkerShape(startG.property("Contents"), params.cm_startShape, size, color);
 
-                // === Mid sub-group ===
-                // ВАЖНО: снова берём Contents родителя, т.к. предыдущий addProperty
-                // мог переиндексировать
-                var wrapInnerB = wrap.property("Contents");
-                var midG = wrapInnerB.addProperty("ADBE Vector Group");
+                var midG = wrap.property("Contents").addProperty("ADBE Vector Group");
                 midG.name = "Mid";
                 buildMarkerShape(midG.property("Contents"), c.shape, size, color);
 
-                // === Position expression ===
-                // Берём wrap снова по индексу (i+1)
-                var wrapNow = root.property(i + 1);
+                var wrapNow   = root.property(i + 1);
                 var wrapTrNow = wrapNow.property("Transform");
-                var posProp = wrapTrNow.property("Position");
+                var posProp   = wrapTrNow.property("Position");
                 var expr =
                     "var L = thisComp.layer('" + targetName + "');\n" +
                     "var r = L.sourceRectAtTime(time, false);\n" +
@@ -322,39 +361,85 @@
                     "[cx, cy]";
                 try { posProp.expression = expr; } catch (e) { }
 
-                // === Timing ===
-                var t0 = startT + i * 0.05;
+                var off = i * stagger;
+                var t0 = startT + off;
                 var t1 = t0 + dur * 0.25;
                 var t2 = t0 + dur * 0.75;
                 var t3 = t0 + dur;
 
-                // Wrapper opacity — берём заново
-                var wrapOp = wrapTrNow.property("Opacity");
-                wrapOp.setValueAtTime(Math.max(0, startT - 0.001), 0);
-                wrapOp.setValueAtTime(t0, 100);
-                setEaseOut(wrapOp);
-
-                // Start / Mid opacity — берём по имени внутри wrap
+                var wrapOp  = wrapTrNow.property("Opacity");
                 var startOp = wrapNow.property("Contents").property("Start").property("Transform").property("Opacity");
-                var midOp = wrapNow.property("Contents").property("Mid").property("Transform").property("Opacity");
+                var midOp   = wrapNow.property("Contents").property("Mid").property("Transform").property("Opacity");
 
-                startOp.setValueAtTime(Math.max(0, startT - 0.001), 0);
-                startOp.setValueAtTime(t0, 100);
-                startOp.setValueAtTime(t1, 0);
-                startOp.setValueAtTime(t2, 0);
-                startOp.setValueAtTime(t3, 100);
+                if (looped) {
+                    // ---- ЦИКЛ ЧЕРЕЗ EXPRESSIONS (без keyframes) ----
+                    var period = dur + gap;
+                    if (period <= 0) period = 0.01;
 
-                midOp.setValueAtTime(Math.max(0, startT - 0.001), 0);
-                midOp.setValueAtTime(t0, 0);
-                midOp.setValueAtTime(t1, 100);
-                midOp.setValueAtTime(t2, 100);
-                midOp.setValueAtTime(t3, 0);
+                    try { wrapOp.expression = "(time < " + t0 + ") ? 0 : 100"; } catch (e) { }
+
+                    var pre =
+                        "var startT=" + startT + ";\n" +
+                        "var off=" + off + ";\n" +
+                        "var dur=" + dur + ";\n" +
+                        "var per=" + period + ";\n" +
+                        "var q1=dur*0.25, q2=dur*0.75;\n" +
+                        "var t=time-startT-off;\n";
+
+                    var startTail = hideEnd ? "0" : "100*((p-q2)/(dur-q2))";
+                    var startIdle = hideEnd ? "0" : "100";
+
+                    var exprStart = pre +
+                        "if (t < 0) 0; else {\n" +
+                        "  var p = t % per; if (p < 0) p += per;\n" +
+                        "  if (p <= q1) 100*(1 - p/q1);\n" +
+                        "  else if (p <= q2) 0;\n" +
+                        "  else if (p <= dur) " + startTail + ";\n" +
+                        "  else " + startIdle + ";\n" +
+                        "}";
+
+                    var exprMid = pre +
+                        "if (t < 0) 0; else {\n" +
+                        "  var p = t % per; if (p < 0) p += per;\n" +
+                        "  if (p <= q1) 100*(p/q1);\n" +
+                        "  else if (p <= q2) 100;\n" +
+                        "  else if (p <= dur) 100*(1-(p-q2)/(dur-q2));\n" +
+                        "  else 0;\n" +
+                        "}";
+
+                    try { startOp.expression = exprStart; } catch (e) { }
+                    try { midOp.expression   = exprMid;   } catch (e) { }
+
+                    if (startOp.expressionError || midOp.expressionError) {
+                        alert("Corner Markers (loop) " + c.name + ":\n" +
+                              (startOp.expressionError || midOp.expressionError));
+                    }
+                }
+                else {
+                    // ---- ОДНОКРАТНО, KEYFRAMES ----
+                    wrapOp.setValueAtTime(Math.max(0, startT - 0.001), 0);
+                    wrapOp.setValueAtTime(t0, 100);
+                    setEaseOut(wrapOp);
+
+                    startOp.setValueAtTime(Math.max(0, startT - 0.001), 0);
+                    startOp.setValueAtTime(t0, 100);
+                    startOp.setValueAtTime(t1, 0);
+                    startOp.setValueAtTime(t2, 0);
+                    startOp.setValueAtTime(t3, hideEnd ? 0 : 100);
+
+                    midOp.setValueAtTime(Math.max(0, startT - 0.001), 0);
+                    midOp.setValueAtTime(t0, 0);
+                    midOp.setValueAtTime(t1, 100);
+                    midOp.setValueAtTime(t2, 100);
+                    midOp.setValueAtTime(t3, 0);
+                }
 
             } catch (err) {
                 alert("Угол " + i + " (" + corners[i].name + "): " + err.toString() + "\nLine: " + err.line);
             }
         }
     }
+
     // =====================================================
     // PRESET: Shockwave
     // =====================================================
@@ -1536,27 +1621,29 @@ var base = params.gp_base;
 var amp  = params.gp_amp;
 var period = params.gp_period;
 
-var fx = layer.property("Effects");
-var glow;
-try {
-   glow = fx.addProperty("ADBE Glo2"); // AE Glow
-} catch(e){
-   try { glow = fx.addProperty("ADBE Glow"); } catch(e2){}
-}
-if (!glow) return;
+    var fx = layer.property("Effects");
+    var glow = null;
+    var tries = ["ADBE Glo2", "ADBE Glow", "Glow"];
+    for (var t = 0; t < tries.length; t++){
+        try { glow = fx.addProperty(tries[t]); if (glow) break; } catch(e){}
+    }
+    if (!glow) { alert("Glow effect not available."); return; }
 
-// Установим базовые параметры
-try { glow.property("Glow Radius").setValue(15); } catch(e){}
-try { glow.property("Glow Intensity").setValue(base); } catch(e){}
+    try { glow.property(1).setValue(15); } catch(e){}   // Glow Threshold or Radius
+    try { glow.property(2).setValue(base); } catch(e){} // Intensity — приблизительно
 
-// Expression на Glow Intensity
-var intProp = glow.property("Glow Intensity");
-var expr =
-   "var base = " + base + ";\n" +
-   "var amp  = " + amp + ";\n" +
-   "var period = " + period + ";\n" +
-   "base + Math.sin(time*Math.PI*2/period)*amp;";
-try { intProp.expression = expr; } catch(e){}
+    // Ищем свойство интенсивности по имени + fallback на property(3)
+    var intProp = null;
+    try { intProp = glow.property("Glow Intensity"); } catch(e){}
+    if (!intProp) { try { intProp = glow.property(3); } catch(e){} }
+    if (!intProp) return;
+
+        var expr =
+        "var base = " + base + ";\n" +
+        "var amp  = " + amp + ";\n" +
+        "var period = " + period + ";\n" +
+        "base + Math.sin(time*Math.PI*2/period)*amp;";
+    try { intProp.expression = expr; } catch(e){}
 }
 
 function applyMicroJitter(layer, params){
@@ -1564,16 +1651,17 @@ var freq = params.mj_freq;
 var amp  = params.mj_amp;
 var axis = params.mj_axis;
 
-var pos = layer.property("Transform").property("Position");
-var expr;
-if (axis === "X"){
-   expr = "var w = wiggle(" + freq + "," + amp + ");\n[value[0] + w[0]-value[0], value[1]];";
-} else if (axis === "Y"){
-   expr = "var w = wiggle(" + freq + "," + amp + ");\n[value[0], value[1] + w[1]-value[1]];";
-} else {
-   expr = "wiggle(" + freq + "," + amp + ");";
-}
-try { pos.expression = expr; } catch(e){}
+    var pos = layer.property("Transform").property("Position");
+    var expr;
+    if (axis === "X"){
+        expr = "var w = wiggle(" + freq + "," + amp + ");\n[w[0], value[1]];";
+    } else if (axis === "Y"){
+        expr = "var w = wiggle(" + freq + "," + amp + ");\n[value[0], w[1]];";
+    } else {
+        expr = "wiggle(" + freq + "," + amp + ");";
+    }
+    try { pos.expression = expr; } catch (e) {}
+
 }
 
 function applyIdlePulse(layer, params){
@@ -1683,9 +1771,10 @@ var dir = reverse ? -1 : 1;
                 st.property("ADBE Vector Stroke Width").setValue(strokeW);
 
                 var trim = inner.addProperty("ADBE Vector Filter - Trim");
-                var startProp = trim.property("Start");
-                var endProp   = trim.property("End");
-                var offProp   = trim.property("Offset");
+                var startProp = trim.property("ADBE Vector Trim Start");
+var endProp   = trim.property("ADBE Vector Trim End");
+var offProp   = trim.property("ADBE Vector Trim Offset");
+
 
                 var baseAngle = cornerAngles[ci].off;
 
@@ -2133,12 +2222,19 @@ var dir = reverse ? -1 : 1;
         }
 
         // ---------- Animation (on Ramp End of Ramp / layer opacity) ----------
-        if (anim !== 0){
+                if (anim !== 0){
             try {
-                var endRampProp = ramp.property("End of Ramp");
-                var startRampProp = ramp.property("Start of Ramp");
+                // Ramp порядок свойств (matchName для не-англ. локалей):
+                // 1 Start of Ramp  |  2 Start Color
+                // 3 End of Ramp    |  4 End Color
+                // 5 Ramp Shape     |  6 Ramp Scatter  |  7 Blend With Original
+                var startRampProp = ramp.property(1);
+                var startColorProp = ramp.property(2);
+                var endRampProp   = ramp.property(3);
+                var endColorProp  = ramp.property(4);
+
                 var layerOpProp = gradLayer.property("Transform").property("Opacity");
-                var scaleProp = gradLayer.property("Transform").property("Scale");
+                var scaleProp   = gradLayer.property("Transform").property("Scale");
 
                 if (anim === 1){ // Sweep — rotate End around center
                     var sweepExpr =
@@ -2158,24 +2254,13 @@ var dir = reverse ? -1 : 1;
                         "var k=100 + Math.sin(t/period*Math.PI*2)*8;\n" +
                         "[k, k];";
                     scaleProp.expression = breathExpr;
-                } else if (anim === 3){ // Shimmer — wiggle opacity slightly
+                } else if (anim === 3){ // Shimmer — Math.sin opacity
                     var shimExpr =
-                        "var startT=" + startT + ";\n" +
-                        "var base=" + ((innerOp+outerOp)/2) + ";\n" +
-                        "base + wiggle(" + (1/speed).toFixed(3) + ", 15)[0] - base;";
-                    // simpler:
-                    shimExpr =
-                        "var base=" + ((innerOp+outerOp)/2) + ";\n" +
-                        "var f=" + (1/speed).toFixed(3) + ";\n" +
-                        "clamp(base + (wiggle(f, 15) - base), 0, 100);";
-                    // safest form:
-                    shimExpr =
                         "var base=" + ((innerOp+outerOp)/2) + ";\n" +
                         "var f=" + (1/speed).toFixed(3) + ";\n" +
                         "Math.max(0, Math.min(100, base + (Math.sin(time*Math.PI*2*f)*10)));";
                     layerOpProp.expression = shimExpr;
                 } else if (anim === 4){ // Hue shift — cycle Start Color hue
-                    // Rotate hue over time via expression on Start Color
                     var hueExpr =
                         "var startT=" + startT + ";\n" +
                         "var period=" + speed + ";\n" +
@@ -2185,7 +2270,7 @@ var dir = reverse ? -1 : 1;
                         "var g=0.5+0.5*Math.sin(a+2.094);\n" +
                         "var b=0.5+0.5*Math.sin(a+4.189);\n" +
                         "[r,g,b,1];";
-                    try { ramp.property("Start Color").expression = hueExpr; } catch(e){}
+                    try { startColorProp.expression = hueExpr; } catch(e){}
                 } else if (anim === 5){ // Rotate gradient — rotate whole layer
                     var rotProp = gradLayer.property("Transform").property("Rotation");
                     var rotExpr =
@@ -2196,6 +2281,7 @@ var dir = reverse ? -1 : 1;
                 }
             } catch(e){}
         }
+
 
         // Pulse gradient (independent of anim) — pulses layer scale
         if (pulseGrad){
@@ -2412,7 +2498,7 @@ var dir = reverse ? -1 : 1;
 // =====================================================
 // HELP TEXT (RU)
 // =====================================================
-    function showHelp(){
+        function showHelp(){
         var txt =
             SCRIPT_NAME + " " + SCRIPT_VERSION + "\n" +
             "Универсальный аниматор для After Effects.\n\n" +
@@ -2422,54 +2508,56 @@ var dir = reverse ? -1 : 1;
             "3. Настройте параметры.\n" +
             "4. Установите CTI (или задайте Start Time вручную).\n" +
             "5. Нажмите Apply.\n\n" +
+            "═══ COMMON ═══\n" +
+            "• Use CTI — Start Time берётся из текущей позиции CTI.\n" +
+            "• Looped — циклический режим через expressions (без keyframes).\n" +
+            "• From contour — старт с контура фигуры (bbox), не из центра.\n" +
+            "• Match shape — форма генератора повторяет форму target\n" +
+            "  (только Shockwave, Reverse Pulse).\n\n" +
             "═══ ENTRANCE ═══\n" +
-            "• Glitch Pop-In — Scale + Opacity с overshoot + 2 цветных дубликата.\n" +
-            "• Slide-In Cascade — сдвиг с направления + fade-in. Stagger — задержка.\n" +
-            "• Cascade Reverse — то же, но с обратным порядком слоёв.\n" +
+            "• Glitch Pop-In — Scale + Opacity с overshoot + 2 цветных дубликата (R/G/B tint).\n" +
+            "• Slide-In Cascade — сдвиг с направления + fade-in. Stagger — задержка между слоями.\n" +
+            "• Cascade Reverse — Slide-In, но с обратным порядком слоёв.\n" +
             "• Digital Manifestation — рваный flicker через expression, затем стабильно.\n" +
             "• RGB Split — 3 цветных дубликата (R/G/B), схождение к центру.\n" +
-            "• Slice Glitch — adjustment layer с fractal noise + displacement.\n" +
+            "• Slice Glitch — adjustment layer + fractal noise + displacement. Тяжёлый пресет.\n" +
             "• Fade-Up Delayed — плавное появление снизу с задержкой и stagger.\n\n" +
             "═══ IDLE (петлевые) ═══\n" +
-            "• Glow Pulse — эффект Glow с синусоидальной пульсацией.\n" +
-            "• Micro-Jitter — wiggle expression на Position (X/Y/Both).\n" +
+            "• Glow Pulse — Glow с синусоидальной пульсацией интенсивности.\n" +
+            "• Micro-Jitter — wiggle expression на Position (X / Y / Both).\n" +
             "• Idle Pulse — синусоидальная пульсация Scale (дыхание).\n" +
-            "• Gentle Float — плавное покачивание по Y.\n" +
-            "• Scanline Flicker — adjustment layer со сканлайнами.\n\n" +
+            "• Gentle Float — плавное покачивание по Y.\n\n" +
             "═══ GENERATORS ═══\n" +
             "• Corner Markers — 4 маркера вокруг bounding box слоя.\n" +
             "• Shockwave — концентрические ударные волны.\n" +
-            "• Reverse Pulse — обратная пульсация (сжимающиеся круги).\n" +
+            "• Reverse Pulse — сжимающиеся круги (обратная пульсация).\n" +
             "• Impact Burst — вспышка + лучи от центра.\n" +
-            "• Light Sweep — полоса света проходит через слой (с alpha matte).\n" +
-            "• Concentric Arcs — концентрические дуги/круги с reveal.\n" +
-            "   - Arc segment: вращающиеся дуги вместо растущих кругов.\n" +
-            "   - Reverse: обратное направление (для полного круга — через Rotation).\n" +
-            "   - Start corners (TL/TR/BR/BL): точки старта на кругу (12/3/6/9 часов).\n" +
-            "   - Segment len %: длина каждого сегмента (100% = полный обход).\n" +
-            "• Orbiting Dots — точки на орбите вокруг слоя.\n" +
-            "   - Circle / Elliptical orbit / Follow shape (по периметру bbox).\n" +
-            "   - Padding + In (внутрь фигуры).\n" +
-            "• Rounded Stroke — растущая рамка со скруглёнными углами.\n" +
-            "   - Auto: полный круг (roundness = min(w,h)/2).\n" +
-            "   - Start corners: точки старта (TL/TR/BR/BL).\n" +
-            "   - Segment len %: длина каждого сегмента.\n" +
-            "• Focus Frame — 4 угловых L-маркера + мигающая рамка.\n" +
-            "   - Стили углов (комбинируются): Jitter / Fade / Teleport / Ghost / Scale / Shrink.\n" +
-            "   - Intro flash: одиночное мигание рамкой в начале.\n" +
-            "   - Repeat flash: циклическое мигание с периодом Flash period.\n" +
-            "   - Corner len %: длина уголка (% от bbox).\n" +
-            "   - Padding + In (внутрь фигуры).\n" +
-            "   - Frame col / Corner col: раздельные цвета рамки и уголков.\n\n" +
-            "═══ COMMON ═══\n" +
-            "• Use CTI — использовать положение CTI как Start time.\n" +
-            "• Looped — циклические выражения вместо keyframes.\n" +
-            "• From contour — дополнительный отступ от контура.\n" +
-            "• Match shape — учитывать реальную форму (для некоторых пресетов).\n\n" +
-            "СЛОИ С ПРЕФИКСОМ " + LAYER_PREFIX + " — созданные скриптом.\n" +
-            "Undo (Ctrl+Z) отменяет применение пресета.";
+            "• Light Sweep — полоса света через слой с alpha matte.\n" +
+            "   ⚠ Alpha matte использует target как маску: если target — solid без\n" +
+            "     прозрачности, блик покроет всё. Используй shape/text layers.\n" +
+            "• Concentric Arcs — концентрические дуги/круги с reveal, staggered.\n" +
+            "• Orbiting Dots — точки движутся по орбите (bbox или ellipse).\n" +
+            "   При Follow shape=on путь = скруглённый bbox (elliptical игнорируется).\n" +
+            "• Rounded Stroke — обводка по периметру со скруглёнными углами и trim.\n" +
+            "• Focus Frame — рамка с угловыми маркерами и стилями:\n" +
+            "   Jitter / Fade / Teleport / Ghost / Scale / Shrink (комбинируются).\n" +
+            "• Aura Circle — радиальный/линейный градиент вокруг слоя.\n" +
+            "   Gradient: Radial / Linear. Invert — поменять inner↔outer.\n" +
+            "   Stroke styles: None / Solid / Dashed / Dotted / March.\n" +
+            "   Animation: None / Sweep / Breathing / Shimmer / Hue shift / Rotate gradient.\n" +
+            "   Pulse Stroke / Gradient — независимые пульсации.\n" +
+            "• Drag Inertia — 3 nulls (Start/End/Target) для движения с lag+wobble.\n" +
+            "   Требует ровно 1 выделенный слой; создаёт 2 null-контроллера.\n" +
+            "   Stretch — лёгкое растяжение Scale во время движения.\n\n" +
+            "СОВЕТЫ:\n" +
+            "• Looped-режим предпочтителен для Idle и повторяющихся эффектов.\n" +
+            "• From contour + Match shape отлично работают с фигурами (Shape layers).\n" +
+            "• Slice Glitch — тяжёлый: применяй по одному слою за раз.\n" +
+            "• Все генераторы parent'ятся к target — двигай target, генератор следует.\n\n" +
+            "Версия: " + SCRIPT_VERSION;
         alert(txt);
     }
+
 
 
 
@@ -2826,13 +2914,21 @@ pCM.orientation = "column"; pCM.alignChildren = ["fill","top"]; pCM.spacing = 3;
 addSectionHeader(pCM, "CORNER MARKERS");
 var cmPad   = addSlider(pCM, "Padding:",   0, 100, 10, 0, "px");
 var cmSize  = addSlider(pCM, "Size:",      5, 60, 18, 0, "px");
-var cmStart = addDropdown(pCM, "Start:",   ["L","Square","Circle","Cross"], 0);
-var cmM1    = addDropdown(pCM, "Mid TL:",  ["Cross","Square","Circle","L","Square with inner","Circle dot"], 0);
-var cmM2    = addDropdown(pCM, "Mid TR:",  ["Cross","Square","Circle","L","Square with inner","Circle dot"], 1);
-var cmM3    = addDropdown(pCM, "Mid BR:",  ["Cross","Square","Circle","L","Square with inner","Circle dot"], 2);
-var cmM4    = addDropdown(pCM, "Mid BL:",  ["Cross","Square","Circle","L","Square with inner","Circle dot"], 3);
+var CM_SHAPES = ["L-bracket","Plus cross","X-cross","Square hollow",
+                 "Square with inner","Circle ring","Circle dot"];
+var cmStart = addDropdown(pCM, "Start:",   CM_SHAPES, 0); // L-bracket
+var cmM1    = addDropdown(pCM, "Mid TL:",  CM_SHAPES, 1); // Plus cross
+var cmM2    = addDropdown(pCM, "Mid TR:",  CM_SHAPES, 3); // Square hollow
+var cmM3    = addDropdown(pCM, "Mid BR:",  CM_SHAPES, 5); // Circle ring
+var cmM4    = addDropdown(pCM, "Mid BL:",  CM_SHAPES, 0); // L-bracket
 var cmDur   = addSlider(pCM, "Duration:",  0.2, 3.0, 0.6, 2, "s");
 var cmCol   = addColorField(pCM, "Color:", "#FF8C26");
+var cmOptRow = pCM.add("group");
+cmOptRow.orientation = "row"; cmOptRow.alignChildren = ["left","center"]; cmOptRow.spacing = 10;
+var cmHideEndChk = cmOptRow.add("checkbox", undefined, "Hide at end (opacity → 0)");
+cmHideEndChk.value = false;
+var cmGap = addSlider(pCM, "Loop pause:", 0, 3.0, 0.4, 2, "s");
+
 
 // --- Shockwave ---
 var pSW = genStack.add("group");
@@ -3095,13 +3191,13 @@ var ffShrink   = ffStyleRow2.add("checkbox", undefined, "Shrink");  ffShrink.val
             nStart.name = baseStart + suffix;
             nStart.transform.position.setValue([tPos[0], tPos[1]]);
             try { nStart.label = 10; } catch(e){} // green
-            try { nStart.source.width = 100; nStart.source.height = 100; } catch(e){}
+           
 
             var nEnd = comp.layers.addNull();
             nEnd.name = baseEnd + suffix;
             nEnd.transform.position.setValue([tPos[0] + 300, tPos[1]]);
             try { nEnd.label = 1; } catch(e){} // red
-            try { nEnd.source.width = 100; nEnd.source.height = 100; } catch(e){}
+            
         } catch(err){
             alert("Create markers error: " + err.toString());
         }
@@ -3147,6 +3243,9 @@ genApplyBtn.onClick = function(){
        cm_midShape1: cmM1.selection.text, cm_midShape2: cmM2.selection.text,
        cm_midShape3: cmM3.selection.text, cm_midShape4: cmM4.selection.text,
        cm_duration: cmDur.value(), cm_color: cmCol.text,
+       cm_hideEnd: cmHideEndChk.value,
+       cm_loopGap: cmGap.value(),
+
        // Shockwave
        sw_count: swCnt.value(), sw_duration: swDur.value(),
        sw_maxRadius: swRad.value(), sw_stroke: swStr.value(),
